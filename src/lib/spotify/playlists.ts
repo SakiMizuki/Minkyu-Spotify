@@ -106,17 +106,20 @@ function toSpotifyTrack(item: SpotifyPlaylistTrackItem): SpotifyTrack | undefine
     return undefined;
   }
 
+  const album = item.track.album ?? { id: null, name: "Unknown album", images: [] };
+  const artists = Array.isArray(item.track.artists) ? item.track.artists : [];
+
   return {
     id: item.track.id,
     uri: item.track.uri,
     name: item.track.name,
     duration_ms: item.track.duration_ms,
     is_local: item.track.is_local,
-    artists: item.track.artists.map((artist) => ({ id: artist.id, name: artist.name })),
+    artists: artists.map((artist) => ({ id: artist?.id ?? null, name: artist?.name ?? "Unknown artist" })),
     album: {
-      id: item.track.album.id,
-      name: item.track.album.name,
-      images: item.track.album.images,
+      id: album.id ?? null,
+      name: album.name ?? "Unknown album",
+      images: Array.isArray(album.images) ? album.images : [],
     },
   };
 }
