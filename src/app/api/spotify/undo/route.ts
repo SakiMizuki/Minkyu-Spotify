@@ -28,13 +28,15 @@ export async function POST(request: NextRequest) {
     }
 
     const { context, fetcher } = await getSpotifyClient(request);
-    const uris = consumeUndoEntry(context, targetPlaylistId, undoToken);
+    const undoPayload = consumeUndoEntry(context, targetPlaylistId, undoToken);
 
-    if (!uris || uris.length === 0) {
+    if (!undoPayload || undoPayload.entries.length === 0) {
       return NextResponse.json({ error: "No undoable sync found" }, { status: 404 });
     }
 
-    const { removedUris } = await removeTracksFromPlaylist(fetcher, targetPlaylistId, uris);
+    const { removedUris } = await removeTracksFromPlaylist(fetcher, targetPlaylistId, undoPayload.entries, {
+      snapshotId: undoPayload.snapshotId ?? undefined,
+    });
 
     const response = NextResponse.json({ removedUris });
     applyContextCookies(response, context);
