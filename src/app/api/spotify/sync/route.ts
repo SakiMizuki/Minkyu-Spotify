@@ -7,7 +7,7 @@ import {
   applyContextCookies,
   getSpotifyClient,
 } from "@/lib/spotify/client";
-import { addTracksToPlaylist, getFilteredCandidateUris } from "@/lib/spotify/playlists";
+import { addTracksToPlaylist, getFilteredCandidateUris, type SpotifyPlaylistResponse } from "@/lib/spotify/playlists";
 import { setUndoEntry } from "@/lib/spotify/undo-store";
 
 interface SyncRequestBody {
@@ -28,7 +28,25 @@ export async function POST(request: NextRequest) {
     }
 
     const { context, fetcher } = await getSpotifyClient(request);
-    const filteredUris = await getFilteredCandidateUris(fetcher, targetPlaylistId, trackUris);
+    const currentUser = await fetcher<{ id: string }>("/me");
+    const playlistDetails = await fetcher<SpotifyPlaylistResponse>(
+      `/playlists/${targetPlaylistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+    );
+
+    const isCollaborative = playlistDetails.collaborative ?? false;
+    const ownerId = playlistDetails.owner?.id ?? null;
+    const isOwned = ownerId === currentUser.id;
+
+    if (!isCollaborative && !isOwned) {
+      return NextResponse.json(
+        { error: "You can only sync into playlists you own or that are collaborative." },
+        { status: 403 },
+      );
+    }
+
+    const filteredUris = await getFilteredCandidateUris(fetcher, targetPlaylistId, trackUris, {
+      initialPlaylist: playlistDetails,
+    });
     const { addedUris } = await addTracksToPlaylist(fetcher, targetPlaylistId, filteredUris);
 
     const undoToken = addedUris.length > 0 ? setUndoEntry(context, targetPlaylistId, addedUris).undoToken : null;

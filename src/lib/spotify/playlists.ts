@@ -8,6 +8,7 @@ interface SpotifyImageResponse {
 }
 
 interface SpotifyPlaylistOwner {
+  id?: string | null;
   display_name?: string | null;
 }
 
@@ -17,6 +18,7 @@ interface SpotifyPlaylistItem {
   description?: string | null;
   images: SpotifyImageResponse[];
   owner: SpotifyPlaylistOwner;
+  collaborative?: boolean;
   tracks: {
     total: number;
   };
@@ -43,7 +45,7 @@ interface SpotifyPlaylistTrackItem {
   } | null;
 }
 
-interface SpotifyPlaylistResponse extends SpotifyPlaylistItem {
+export interface SpotifyPlaylistResponse extends SpotifyPlaylistItem {
   tracks: {
     items: SpotifyPlaylistTrackItem[];
     next: string | null;
@@ -79,15 +81,23 @@ export interface PlaylistComparisonPayload {
   inBoth: ComparableTrack[];
 }
 
-function toPlaylistSummary(playlist: SpotifyPlaylistItem): PlaylistSummary {
+function toPlaylistSummary(playlist: SpotifyPlaylistItem, currentUserId?: string): PlaylistSummary {
+  const ownerId = playlist.owner?.id ?? null;
+  const isCollaborative = playlist.collaborative ?? false;
+  const isOwned = currentUserId ? ownerId === currentUserId : false;
+
   return {
     id: playlist.id,
     name: playlist.name,
     description: playlist.description ?? null,
     images: playlist.images,
     ownerName: playlist.owner?.display_name ?? null,
+    ownerId,
     trackCount: playlist.tracks.total,
     externalUrl: playlist.external_urls?.spotify,
+    isCollaborative,
+    isOwned,
+    isEditable: isOwned || isCollaborative,
   };
 }
 
@@ -146,11 +156,13 @@ export async function getUserPlaylists(fetcher: SpotifyFetcher): Promise<{ playl
   const playlists: PlaylistSummary[] = [];
   let total = 0;
   let url: string | null = "/me/playlists?limit=50";
+  const currentUser = await fetcher<{ id: string }>("/me");
+  const currentUserId = currentUser.id;
 
   while (url !== null) {
     const page: SpotifyPlaylistPage = await fetcher(url);
     total = page.total;
-    playlists.push(...page.items.map(toPlaylistSummary));
+    playlists.push(...page.items.map((playlist) => toPlaylistSummary(playlist, currentUserId)));
     url = page.next;
   }
 
@@ -159,7 +171,7 @@ export async function getUserPlaylists(fetcher: SpotifyFetcher): Promise<{ playl
 
 export async function getPlaylistWithTracks(fetcher: SpotifyFetcher, playlistId: string): Promise<PlaylistWithTracks> {
   const playlist = await fetcher<SpotifyPlaylistResponse>(
-    `/playlists/${playlistId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+    `/playlists/${playlistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
   );
 
   const tracks = await fetchAllPlaylistTracks(fetcher, playlist);
@@ -194,10 +206,10 @@ export async function comparePlaylistsWithFetcher(
 ): Promise<PlaylistComparisonPayload> {
   const [playlistAResponse, playlistBResponse] = await Promise.all([
     fetcher<SpotifyPlaylistResponse>(
-      `/playlists/${playlistAId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+      `/playlists/${playlistAId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
     ),
     fetcher<SpotifyPlaylistResponse>(
-      `/playlists/${playlistBId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+      `/playlists/${playlistBId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
     ),
   ]);
 
@@ -341,6 +353,7 @@ export async function getFilteredCandidateUris(
   fetcher: SpotifyFetcher,
   playlistId: string,
   candidateUris: string[],
+  options?: { initialPlaylist?: SpotifyPlaylistResponse },
 ): Promise<string[]> {
   const uniqueCandidates = Array.from(new Set(candidateUris));
 
@@ -348,9 +361,11 @@ export async function getFilteredCandidateUris(
     return [];
   }
 
-  const playlistResponse = await fetcher<SpotifyPlaylistResponse>(
-    `/playlists/${playlistId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
-  );
+  const playlistResponse =
+    options?.initialPlaylist ??
+    (await fetcher<SpotifyPlaylistResponse>(
+      `/playlists/${playlistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+    ));
 
   const existingTracks = await fetchAllPlaylistTracks(fetcher, playlistResponse);
   const existingUris = new Set(existingTracks.map((track) => track.uri));
