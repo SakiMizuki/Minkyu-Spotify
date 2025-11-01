@@ -4,7 +4,9 @@ import { NextResponse } from "next/server";
 import {
   SpotifyApiError,
   SpotifyAuthError,
+  SpotifyScopeError,
   applyContextCookies,
+  ensureSpotifyScopes,
   getSpotifyClient,
 } from "@/lib/spotify/client";
 import { comparePlaylistsWithFetcher } from "@/lib/spotify/playlists";
@@ -23,6 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { context, fetcher } = await getSpotifyClient(request);
+    ensureSpotifyScopes(context, ["playlist-read-private", "playlist-read-collaborative"]);
     const comparison = await comparePlaylistsWithFetcher(fetcher, sourcePlaylistId, targetPlaylistId);
     const response = NextResponse.json(comparison);
     applyContextCookies(response, context);
@@ -30,6 +33,17 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof SpotifyAuthError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (error instanceof SpotifyScopeError) {
+      return NextResponse.json(
+        {
+          error: "Missing Spotify permissions",
+          details: { missingScopes: error.missingScopes },
+          action: "Please log in again to re-authorize the required playlist scopes.",
+        },
+        { status: 403 },
+      );
     }
 
     if (error instanceof SpotifyApiError) {

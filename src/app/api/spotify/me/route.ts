@@ -4,13 +4,16 @@ import { NextResponse } from "next/server";
 import {
   SpotifyApiError,
   SpotifyAuthError,
+  SpotifyScopeError,
   applyContextCookies,
+  ensureSpotifyScopes,
   getSpotifyClient,
 } from "@/lib/spotify/client";
 
 export async function GET(request: NextRequest) {
   try {
     const { context, fetcher } = await getSpotifyClient(request);
+    ensureSpotifyScopes(context, ["user-read-private"]);
     const profile = await fetcher("/me");
     const response = NextResponse.json(profile);
     applyContextCookies(response, context);
@@ -18,6 +21,17 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     if (error instanceof SpotifyAuthError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (error instanceof SpotifyScopeError) {
+      return NextResponse.json(
+        {
+          error: "Missing Spotify permissions",
+          details: { missingScopes: error.missingScopes },
+          action: "Please log in again to re-authorize the required playlist scopes.",
+        },
+        { status: 403 },
+      );
     }
 
     if (error instanceof SpotifyApiError) {
