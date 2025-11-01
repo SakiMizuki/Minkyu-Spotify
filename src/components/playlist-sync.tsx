@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,18 +10,93 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import type {
-  ComparableTrack,
-  PlaylistComparisonPayload,
-  PlaylistTrackWithPresence,
-  TrackPresence,
-} from "@/lib/spotify/playlists";
-import type { PlaylistSummary } from "@/types/spotify";
+import {
+  buildPlaylistComparison,
+  type ComparableTrack,
+  type PlaylistComparisonPayload,
+  type PlaylistTrackWithPresence,
+  type TrackPresence,
+} from "@/lib/spotify/comparison";
+import type { PlaylistSummary, PlaylistWithTracks, SpotifyTrack } from "@/types/spotify";
 
 interface SpotifyUserProfile {
   display_name?: string | null;
   id: string;
   images?: { url: string }[];
+}
+
+interface PlaylistTracksPageResponse {
+  summary: PlaylistSummary | null;
+  tracks: SpotifyTrack[];
+  offset: number;
+  limit: number;
+  total: number;
+  loaded: number;
+  nextOffset: number | null;
+}
+
+type PlaylistSlotKey = "A" | "B";
+
+interface PlaylistLoadState {
+  playlistId: string | null;
+  summary: PlaylistSummary | null;
+  tracks: SpotifyTrack[];
+  loadedCount: number;
+  totalCount: number;
+  isLoading: boolean;
+  error: string | null;
+}
+
+function createInitialLoadState(): PlaylistLoadState {
+  return {
+    playlistId: null,
+    summary: null,
+    tracks: [],
+    loadedCount: 0,
+    totalCount: 0,
+    isLoading: false,
+    error: null,
+  };
+}
+
+function formatPlaylistProgress(state: PlaylistLoadState): string | null {
+  if (!state.isLoading) {
+    return null;
+  }
+
+  if (state.totalCount > 0) {
+    return `Loading... ${state.loadedCount}/${state.totalCount}`;
+  }
+
+  return `Loading... ${state.loadedCount}+`;
+}
+
+async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
+  const text = await response.text();
+
+  try {
+    const data = JSON.parse(text) as { error?: unknown; details?: unknown; action?: unknown } | undefined;
+
+    if (data) {
+      if (typeof data.action === "string" && data.action.trim().length > 0) {
+        return data.action;
+      }
+
+      if (typeof data.error === "string" && data.error.trim().length > 0) {
+        return data.error;
+      }
+
+      if (typeof data.details === "string" && data.details.trim().length > 0) {
+        return data.details;
+      }
+    }
+  } catch {
+    if (text.trim().length > 0) {
+      return text;
+    }
+  }
+
+  return fallback;
 }
 
 interface FetchState<T> {
@@ -132,6 +207,8 @@ interface PlaylistColumnProps {
   summary?: PlaylistSummary;
   tracks?: PlaylistTrackWithPresence[];
   loading: boolean;
+  progressText?: string | null;
+  error?: string | null;
   highlightPresence?: TrackPresence | null;
   selectablePresence: TrackPresence | null;
   selectedTrackIds: Set<string>;
@@ -143,6 +220,8 @@ function PlaylistColumn({
   summary,
   tracks,
   loading,
+  progressText,
+  error,
   highlightPresence,
   selectablePresence,
   selectedTrackIds,
@@ -163,12 +242,14 @@ function PlaylistColumn({
           ) : (
             <span className="text-xs text-muted-foreground">Select a playlist to see details</span>
           )}
+          {progressText ? <span className="mt-1 block text-xs text-muted-foreground">{progressText}</span> : null}
+          {error ? <span className="mt-1 block text-xs text-destructive">{error}</span> : null}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
         <ScrollArea className="h-[420px] rounded-xl border bg-muted/20 p-3">
           <div className="flex flex-col gap-3">
-            {loading && !tracks ? (
+            {loading && (!tracks || tracks.length === 0) ? (
               Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-20 w-full rounded-xl" />)
             ) : tracks && tracks.length > 0 ? (
               tracks.map((track) => (
@@ -247,6 +328,11 @@ export function PlaylistSync() {
   const [playlistBSelection, setPlaylistBSelection] = useState<string>("");
   const [playlistAInput, setPlaylistAInput] = useState<string>("");
   const [playlistBInput, setPlaylistBInput] = useState<string>("");
+  const [playlistLoads, setPlaylistLoads] = useState<{ A: PlaylistLoadState; B: PlaylistLoadState }>(() => ({
+    A: createInitialLoadState(),
+    B: createInitialLoadState(),
+  }));
+  const playlistRequestTokens = useRef<{ A: number; B: number }>({ A: 0, B: 0 });
   const [comparison, setComparison] = useState<PlaylistComparisonPayload | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -290,11 +376,13 @@ export function PlaylistSync() {
       }
 
       if (!profileRes.ok) {
-        throw new Error("Failed to fetch profile details.");
+        const message = await parseErrorMessage(profileRes, "Failed to fetch profile details.");
+        throw new Error(message);
       }
 
       if (!playlistsRes.ok) {
-        throw new Error("Failed to fetch playlists.");
+        const message = await parseErrorMessage(playlistsRes, "Failed to fetch playlists.");
+        throw new Error(message);
       }
 
       const profileJson = (await profileRes.json()) as SpotifyUserProfile;
@@ -329,30 +417,147 @@ export function PlaylistSync() {
     return extractPlaylistId(inputValue);
   }, []);
 
-  const fetchComparison = useCallback(async (playlistAId: string, playlistBId: string) => {
-    const response = await fetch("/api/spotify/compare", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ sourcePlaylistId: playlistAId, targetPlaylistId: playlistBId }),
-    });
-
-    if (response.status === 401) {
-      throw new Error("Your session has expired. Please log in again.");
-    }
-
-    if (!response.ok) {
-      const details = await response.json().catch(() => ({}));
-      throw new Error(details.error ?? "Failed to compare playlists.");
-    }
-
-    return (await response.json()) as PlaylistComparisonPayload;
-  }, []);
-
   const applyComparison = useCallback((payload: PlaylistComparisonPayload) => {
     setComparison(payload);
     setSelectedTrackIds(new Set(payload.inAOnly.map((track) => track.instanceId)));
   }, []);
+
+  const loadPlaylistFully = useCallback(
+    async (slot: PlaylistSlotKey, playlistId: string): Promise<PlaylistWithTracks> => {
+      playlistRequestTokens.current[slot] += 1;
+      const requestToken = playlistRequestTokens.current[slot];
+
+      setPlaylistLoads((prev) => {
+        const previous = prev[slot];
+        const shouldPreserveSummary = previous.playlistId === playlistId ? previous.summary : null;
+
+        return {
+          ...prev,
+          [slot]: {
+            playlistId,
+            summary: shouldPreserveSummary,
+            tracks: [],
+            loadedCount: 0,
+            totalCount: 0,
+            isLoading: true,
+            error: null,
+          },
+        };
+      });
+
+      const aggregatedTracks: SpotifyTrack[] = [];
+      let summary: PlaylistSummary | null = null;
+      let total = 0;
+      let nextOffset: number | null = 0;
+      let currentOffset = 0;
+
+      try {
+        do {
+          const response = await fetch(
+            `/api/spotify/playlists/${playlistId}/tracks?offset=${currentOffset}&limit=100`,
+            { credentials: "include" },
+          );
+
+          if (response.status === 401) {
+            throw new Error("Your session has expired. Please log in again.");
+          }
+
+          if (!response.ok) {
+            const message = await parseErrorMessage(response, "Failed to load playlist tracks.");
+            throw new Error(message);
+          }
+
+          const payload = (await response.json()) as PlaylistTracksPageResponse;
+
+          summary = payload.summary ?? summary;
+          total = typeof payload.total === "number" ? payload.total : total;
+          aggregatedTracks.push(...payload.tracks);
+
+          nextOffset = payload.nextOffset;
+          currentOffset = typeof payload.nextOffset === "number" ? payload.nextOffset : payload.offset + payload.tracks.length;
+
+          setPlaylistLoads((prev) => {
+            if (playlistRequestTokens.current[slot] !== requestToken) {
+              return prev;
+            }
+
+            const nextState: PlaylistLoadState = {
+              playlistId,
+              summary: summary ?? prev[slot].summary,
+              tracks: [...aggregatedTracks],
+              loadedCount: aggregatedTracks.length,
+              totalCount: total,
+              isLoading: typeof nextOffset === "number",
+              error: null,
+            };
+
+            return { ...prev, [slot]: nextState };
+          });
+        } while (typeof nextOffset === "number");
+
+        if (playlistRequestTokens.current[slot] !== requestToken) {
+          throw new Error("playlist-load-cancelled");
+        }
+
+        if (!summary) {
+          throw new Error("Failed to load playlist details.");
+        }
+
+        const finalSummary: PlaylistSummary = {
+          ...summary,
+          trackCount: total,
+        };
+
+        setPlaylistLoads((prev) => {
+          if (playlistRequestTokens.current[slot] !== requestToken) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [slot]: {
+              playlistId,
+              summary: finalSummary,
+              tracks: [...aggregatedTracks],
+              loadedCount: aggregatedTracks.length,
+              totalCount: total,
+              isLoading: false,
+              error: null,
+            },
+          };
+        });
+
+        return {
+          summary: finalSummary,
+          tracks: aggregatedTracks,
+        };
+      } catch (error) {
+        const isCancelled = error instanceof Error && error.message === "playlist-load-cancelled";
+        const message = error instanceof Error ? error.message : "Failed to load playlist.";
+
+        if (!isCancelled) {
+          setPlaylistLoads((prev) => {
+            if (playlistRequestTokens.current[slot] !== requestToken) {
+              return prev;
+            }
+
+            return {
+              ...prev,
+              [slot]: {
+                ...prev[slot],
+                playlistId,
+                isLoading: false,
+                error: message,
+              },
+            };
+          });
+        }
+
+        throw error;
+      }
+    },
+    [],
+  );
 
   const handleCompare = useCallback(async () => {
     const playlistAId = resolvePlaylistId(playlistASelection, playlistAInput);
@@ -365,19 +570,30 @@ export function PlaylistSync() {
 
     setIsComparing(true);
     setActionMessage(null);
+    setComparison(null);
+    setSelectedTrackIds(new Set());
 
     try {
-      const payload = await fetchComparison(playlistAId, playlistBId);
+      const [playlistAData, playlistBData] = await Promise.all([
+        loadPlaylistFully("A", playlistAId),
+        loadPlaylistFully("B", playlistBId),
+      ]);
+
+      const payload = buildPlaylistComparison(playlistAData, playlistBData);
       applyComparison(payload);
       setLastPair({ playlistAId, playlistBId });
       setActionMessage({ type: "success", message: "Comparison complete." });
     } catch (error) {
+      if (error instanceof Error && error.message === "playlist-load-cancelled") {
+        return;
+      }
+
       console.error(error);
       setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to compare playlists." });
     } finally {
       setIsComparing(false);
     }
-  }, [applyComparison, fetchComparison, playlistAInput, playlistASelection, playlistBInput, playlistBSelection, resolvePlaylistId]);
+  }, [applyComparison, loadPlaylistFully, playlistAInput, playlistASelection, playlistBInput, playlistBSelection, resolvePlaylistId]);
 
   const handleSwap = useCallback(
     async (checked: boolean) => {
@@ -406,15 +622,23 @@ export function PlaylistSync() {
 
       if (!playlistAId || !playlistBId) {
         setLastPair(null);
+        setPlaylistLoads({ A: createInitialLoadState(), B: createInitialLoadState() });
         return;
       }
 
       setIsComparing(true);
       try {
-        const payload = await fetchComparison(playlistAId, playlistBId);
+        const [playlistAData, playlistBData] = await Promise.all([
+          loadPlaylistFully("A", playlistAId),
+          loadPlaylistFully("B", playlistBId),
+        ]);
+        const payload = buildPlaylistComparison(playlistAData, playlistBData);
         applyComparison(payload);
         setLastPair({ playlistAId, playlistBId });
       } catch (error) {
+        if (error instanceof Error && error.message === "playlist-load-cancelled") {
+          return;
+        }
         console.error(error);
         setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to compare playlists." });
       } finally {
@@ -423,8 +647,8 @@ export function PlaylistSync() {
     },
     [
       applyComparison,
-      fetchComparison,
       isSwapActive,
+      loadPlaylistFully,
       playlistAInput,
       playlistASelection,
       playlistBInput,
@@ -437,6 +661,20 @@ export function PlaylistSync() {
     () => comparison?.playlistA.tracks.filter((track) => track.presence === "uniqueToA") ?? [],
     [comparison],
   );
+
+  const playlistALoadState = playlistLoads.A;
+  const playlistBLoadState = playlistLoads.B;
+  const playlistALoadingMessage = formatPlaylistProgress(playlistALoadState);
+  const playlistBLoadingMessage = formatPlaylistProgress(playlistBLoadState);
+  const isPlaylistAReady =
+    Boolean(playlistALoadState.summary) &&
+    !playlistALoadState.isLoading &&
+    (playlistALoadState.totalCount === 0 || playlistALoadState.loadedCount >= playlistALoadState.totalCount);
+  const isPlaylistBReady =
+    Boolean(playlistBLoadState.summary) &&
+    !playlistBLoadState.isLoading &&
+    (playlistBLoadState.totalCount === 0 || playlistBLoadState.loadedCount >= playlistBLoadState.totalCount);
+  const playlistsFullyLoaded = isPlaylistAReady && isPlaylistBReady;
 
   useEffect(() => {
     if (!comparison) {
@@ -481,13 +719,18 @@ export function PlaylistSync() {
   }, [allSelected, comparison, missingTracks]);
 
   const handleOpenPreview = useCallback(() => {
+    if (!playlistsFullyLoaded) {
+      setActionMessage({ type: "error", message: "Still loading tracks - please wait." });
+      return;
+    }
+
     if (selectedTrackDetails.length === 0) {
       setActionMessage({ type: "error", message: "Select at least one track to sync." });
       return;
     }
 
     setIsPreviewOpen(true);
-  }, [selectedTrackDetails.length]);
+  }, [playlistsFullyLoaded, selectedTrackDetails.length]);
 
   const refreshComparison = useCallback(async () => {
     if (!lastPair) {
@@ -495,17 +738,30 @@ export function PlaylistSync() {
     }
 
     try {
-      const payload = await fetchComparison(lastPair.playlistAId, lastPair.playlistBId);
+      const [playlistAData, playlistBData] = await Promise.all([
+        loadPlaylistFully("A", lastPair.playlistAId),
+        loadPlaylistFully("B", lastPair.playlistBId),
+      ]);
+      const payload = buildPlaylistComparison(playlistAData, playlistBData);
       applyComparison(payload);
     } catch (error) {
+      if (error instanceof Error && error.message === "playlist-load-cancelled") {
+        return;
+      }
+
       console.error(error);
       setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to refresh playlists." });
     }
-  }, [applyComparison, fetchComparison, lastPair]);
+  }, [applyComparison, lastPair, loadPlaylistFully]);
 
   const handleConfirmSync = useCallback(async () => {
     if (!lastPair) {
       setActionMessage({ type: "error", message: "Compare playlists before syncing." });
+      return;
+    }
+
+    if (!playlistsFullyLoaded) {
+      setActionMessage({ type: "error", message: "Still loading tracks - please wait." });
       return;
     }
 
@@ -535,8 +791,8 @@ export function PlaylistSync() {
       }
 
       if (!response.ok) {
-        const details = await response.json().catch(() => ({}));
-        throw new Error(details.error ?? "Failed to sync playlists.");
+        const message = await parseErrorMessage(response, "Failed to sync playlists.");
+        throw new Error(message);
       }
 
       const { addedUris, undoToken } = (await response.json()) as { addedUris: string[]; undoToken: string | null };
@@ -569,7 +825,7 @@ export function PlaylistSync() {
       setIsSyncing(false);
       setIsPreviewOpen(false);
     }
-  }, [lastPair, playlistState.data, refreshComparison, selectedTrackDetails]);
+  }, [lastPair, playlistState.data, playlistsFullyLoaded, refreshComparison, selectedTrackDetails]);
 
   const handleUndo = useCallback(async () => {
     if (!lastUndo) {
@@ -592,8 +848,8 @@ export function PlaylistSync() {
       }
 
       if (!response.ok) {
-        const details = await response.json().catch(() => ({}));
-        throw new Error(details.error ?? "Failed to undo the last sync.");
+        const message = await parseErrorMessage(response, "Failed to undo the last sync.");
+        throw new Error(message);
       }
 
       const { removedUris } = (await response.json()) as { removedUris: string[] };
@@ -719,7 +975,7 @@ export function PlaylistSync() {
             <Button
               variant="secondary"
               onClick={handleOpenPreview}
-              disabled={selectedTrackDetails.length === 0 || isSyncing || !comparison}
+              disabled={selectedTrackDetails.length === 0 || isSyncing || !comparison || !playlistsFullyLoaded}
               className="h-12 text-base"
             >
               Preview sync
@@ -744,9 +1000,11 @@ export function PlaylistSync() {
       <div className="grid gap-4 sm:grid-cols-2">
         <PlaylistColumn
           label="Playlist A"
-          summary={comparison?.playlistA.summary}
+          summary={comparison?.playlistA.summary ?? playlistALoadState.summary ?? undefined}
           tracks={comparison?.playlistA.tracks}
-          loading={isComparing || playlistState.loading}
+          loading={isComparing || playlistState.loading || playlistALoadState.isLoading}
+          progressText={playlistALoadingMessage}
+          error={playlistALoadState.error}
           highlightPresence="uniqueToA"
           selectablePresence="uniqueToA"
           selectedTrackIds={selectedTrackIds}
@@ -754,9 +1012,11 @@ export function PlaylistSync() {
         />
         <PlaylistColumn
           label="Playlist B"
-          summary={comparison?.playlistB.summary}
+          summary={comparison?.playlistB.summary ?? playlistBLoadState.summary ?? undefined}
           tracks={comparison?.playlistB.tracks}
-          loading={isComparing || playlistState.loading}
+          loading={isComparing || playlistState.loading || playlistBLoadState.isLoading}
+          progressText={playlistBLoadingMessage}
+          error={playlistBLoadState.error}
           highlightPresence={null}
           selectablePresence={null}
           selectedTrackIds={selectedTrackIds}
@@ -779,14 +1039,8 @@ export function PlaylistSync() {
               {allSelected ? "Deselect All" : "Select All"}
             </Button>
             <Button
-              onClick={() => {
-                if (selectedTrackDetails.length === 0) {
-                  setActionMessage({ type: "error", message: "Select at least one track first." });
-                  return;
-                }
-                setIsPreviewOpen(true);
-              }}
-              disabled={selectedTrackDetails.length === 0 || isSyncing}
+              onClick={handleOpenPreview}
+              disabled={selectedTrackDetails.length === 0 || isSyncing || !playlistsFullyLoaded}
               className="h-14 flex-1 text-base"
             >
               {isSyncing ? "Syncing..." : `Sync Selected (${selectedTrackDetails.length})`}

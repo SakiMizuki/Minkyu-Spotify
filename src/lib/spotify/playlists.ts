@@ -1,5 +1,15 @@
 import type { PlaylistSummary, PlaylistWithTracks, SpotifyTrack } from "@/types/spotify";
 import type { SpotifyFetcher } from "@/lib/spotify/client";
+import type {
+  ComparableTrack,
+  PlaylistComparisonPayload,
+  PlaylistTrackWithPresence,
+  TrackPresence,
+} from "@/lib/spotify/comparison";
+import { buildPlaylistComparison } from "@/lib/spotify/comparison";
+
+export type { TrackPresence, ComparableTrack, PlaylistTrackWithPresence, PlaylistComparisonPayload } from "@/lib/spotify/comparison";
+export { buildPlaylistComparison } from "@/lib/spotify/comparison";
 
 interface SpotifyImageResponse {
   url: string;
@@ -33,7 +43,7 @@ interface SpotifyPlaylistPage {
   total: number;
 }
 
-interface SpotifyPlaylistTrackItem {
+export interface SpotifyPlaylistTrackItem {
   track: {
     id: string | null;
     uri: string;
@@ -53,36 +63,7 @@ export interface SpotifyPlaylistResponse extends SpotifyPlaylistItem {
   };
 }
 
-export type TrackPresence = "uniqueToA" | "uniqueToB" | "common";
-
-export interface ComparableTrack {
-  instanceId: string;
-  uri: string;
-  name: string;
-  artists: string[];
-  durationMs: number;
-  imageUrl: string | null;
-}
-
-export interface PlaylistTrackWithPresence extends ComparableTrack {
-  presence: TrackPresence;
-}
-
-export interface PlaylistComparisonPayload {
-  playlistA: {
-    summary: PlaylistSummary;
-    tracks: PlaylistTrackWithPresence[];
-  };
-  playlistB: {
-    summary: PlaylistSummary;
-    tracks: PlaylistTrackWithPresence[];
-  };
-  inAOnly: ComparableTrack[];
-  inBOnly: ComparableTrack[];
-  inBoth: ComparableTrack[];
-}
-
-function toPlaylistSummary(playlist: SpotifyPlaylistItem, currentUserId?: string): PlaylistSummary {
+export function toPlaylistSummary(playlist: SpotifyPlaylistItem, currentUserId?: string): PlaylistSummary {
   const ownerId = playlist.owner?.id ?? null;
   const isCollaborative = playlist.collaborative ?? false;
   const isOwned = currentUserId ? ownerId === currentUserId : false;
@@ -102,7 +83,7 @@ function toPlaylistSummary(playlist: SpotifyPlaylistItem, currentUserId?: string
   };
 }
 
-function toSpotifyTrack(item: SpotifyPlaylistTrackItem): SpotifyTrack | undefined {
+export function toSpotifyTrack(item: SpotifyPlaylistTrackItem): SpotifyTrack | undefined {
   if (!item.track) {
     return undefined;
   }
@@ -188,24 +169,6 @@ export async function getPlaylistWithTracks(fetcher: SpotifyFetcher, playlistId:
   };
 }
 
-function toComparableTrack(track: SpotifyTrack, instanceId: string): ComparableTrack {
-  return {
-    instanceId,
-    uri: track.uri,
-    name: track.name,
-    artists: track.artists.map((artist) => artist.name),
-    durationMs: track.duration_ms,
-    imageUrl: track.album.images.at(0)?.url ?? null,
-  };
-}
-
-function createPresenceTrack(track: ComparableTrack, presence: TrackPresence): PlaylistTrackWithPresence {
-  return {
-    ...track,
-    presence,
-  };
-}
-
 export async function comparePlaylistsWithFetcher(
   fetcher: SpotifyFetcher,
   playlistAId: string,
@@ -225,62 +188,17 @@ export async function comparePlaylistsWithFetcher(
     fetchAllPlaylistTracks(fetcher, playlistBResponse),
   ]);
 
-  const playlistATracks = playlistATracksRaw.map((track, index) => toComparableTrack(track, `A-${index}`));
-  const playlistBTracks = playlistBTracksRaw.map((track, index) => toComparableTrack(track, `B-${index}`));
-
-  const playlistBRemainingCounts = new Map<string, number>();
-  for (const track of playlistBTracks) {
-    playlistBRemainingCounts.set(track.uri, (playlistBRemainingCounts.get(track.uri) ?? 0) + 1);
-  }
-
-  const matchedOccurrencesInB = new Map<string, number>();
-
-  const inAOnly: ComparableTrack[] = [];
-  const inBOnly: ComparableTrack[] = [];
-  const inBoth: ComparableTrack[] = [];
-
-  const playlistATracksWithPresence = playlistATracks.map((track) => {
-    const remaining = playlistBRemainingCounts.get(track.uri) ?? 0;
-
-    if (remaining > 0) {
-      playlistBRemainingCounts.set(track.uri, remaining - 1);
-      matchedOccurrencesInB.set(track.uri, (matchedOccurrencesInB.get(track.uri) ?? 0) + 1);
-      inBoth.push(track);
-      return createPresenceTrack(track, "common");
-    }
-
-    inAOnly.push(track);
-    return createPresenceTrack(track, "uniqueToA");
-  });
-
-  const usedCommonInB = new Map<string, number>();
-
-  const playlistBTracksWithPresence = playlistBTracks.map((track) => {
-    const totalCommon = matchedOccurrencesInB.get(track.uri) ?? 0;
-    const usedSoFar = usedCommonInB.get(track.uri) ?? 0;
-
-    if (usedSoFar < totalCommon) {
-      usedCommonInB.set(track.uri, usedSoFar + 1);
-      return createPresenceTrack(track, "common");
-    }
-
-    inBOnly.push(track);
-    return createPresenceTrack(track, "uniqueToB");
-  });
-
-  return {
-    playlistA: {
-      summary: toPlaylistSummary(playlistAResponse),
-      tracks: playlistATracksWithPresence,
-    },
-    playlistB: {
-      summary: toPlaylistSummary(playlistBResponse),
-      tracks: playlistBTracksWithPresence,
-    },
-    inAOnly,
-    inBOnly,
-    inBoth,
+  const playlistAData: PlaylistWithTracks = {
+    summary: toPlaylistSummary(playlistAResponse),
+    tracks: playlistATracksRaw,
   };
+
+  const playlistBData: PlaylistWithTracks = {
+    summary: toPlaylistSummary(playlistBResponse),
+    tracks: playlistBTracksRaw,
+  };
+
+  return buildPlaylistComparison(playlistAData, playlistBData);
 }
 
 function chunkArray<T>(items: T[], chunkSize: number): T[][] {
