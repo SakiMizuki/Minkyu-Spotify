@@ -69,20 +69,21 @@ interface PlaylistTrackRowProps {
   track: PlaylistTrackWithPresence;
   highlightPresence?: TrackPresence | null;
   selectablePresence: TrackPresence | null;
-  selectedUris: Set<string>;
-  onToggle: (uri: string) => void;
+  selectedTrackIds: Set<string>;
+  onToggle: (instanceId: string) => void;
 }
 
 function PlaylistTrackRow({
   track,
   highlightPresence = null,
   selectablePresence,
-  selectedUris,
+  selectedTrackIds,
   onToggle,
 }: PlaylistTrackRowProps) {
   const isHighlight = highlightPresence ? track.presence === highlightPresence : false;
   const isSelectable = selectablePresence ? track.presence === selectablePresence : false;
-  const isChecked = isSelectable ? selectedUris.has(track.uri) : false;
+  const instanceId = track.instanceId;
+  const isChecked = isSelectable ? selectedTrackIds.has(instanceId) : false;
 
   return (
     <label
@@ -99,7 +100,7 @@ function PlaylistTrackRow({
           type="checkbox"
           className="h-6 w-6 flex-shrink-0 rounded-md border-2 border-primary text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           checked={isChecked}
-          onChange={() => onToggle(track.uri)}
+          onChange={() => onToggle(instanceId)}
         />
       ) : (
         <span className="h-6 w-6 flex-shrink-0" aria-hidden="true" />
@@ -133,8 +134,8 @@ interface PlaylistColumnProps {
   loading: boolean;
   highlightPresence?: TrackPresence | null;
   selectablePresence: TrackPresence | null;
-  selectedUris: Set<string>;
-  onToggle: (uri: string) => void;
+  selectedTrackIds: Set<string>;
+  onToggle: (instanceId: string) => void;
 }
 
 function PlaylistColumn({
@@ -144,7 +145,7 @@ function PlaylistColumn({
   loading,
   highlightPresence,
   selectablePresence,
-  selectedUris,
+  selectedTrackIds,
   onToggle,
 }: PlaylistColumnProps) {
   return (
@@ -172,11 +173,11 @@ function PlaylistColumn({
             ) : tracks && tracks.length > 0 ? (
               tracks.map((track) => (
                 <PlaylistTrackRow
-                  key={track.uri}
+                  key={track.instanceId}
                   track={track}
                   highlightPresence={highlightPresence}
                   selectablePresence={selectablePresence}
-                  selectedUris={selectedUris}
+                  selectedTrackIds={selectedTrackIds}
                   onToggle={onToggle}
                 />
               ))
@@ -212,7 +213,7 @@ function PreviewModal({ open, tracks, onCancel, onConfirm, isSyncing }: PreviewM
         </div>
         <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
           {tracks.map((track) => (
-            <div key={track.uri} className="rounded-2xl border border-muted-foreground/10 bg-muted/30 px-3 py-2 text-sm">
+            <div key={track.instanceId} className="rounded-2xl border border-muted-foreground/10 bg-muted/30 px-3 py-2 text-sm">
               <p className="font-medium text-foreground">{track.name}</p>
               <p className="text-xs text-muted-foreground">{track.artists.join(", ")}</p>
             </div>
@@ -252,7 +253,7 @@ export function PlaylistSync() {
   const [isUndoing, setIsUndoing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isSwapActive, setIsSwapActive] = useState(false);
-  const [selectedUris, setSelectedUris] = useState<Set<string>>(new Set());
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [lastPair, setLastPair] = useState<{ playlistAId: string; playlistBId: string } | null>(null);
   const [lastUndo, setLastUndo] = useState<{ targetPlaylistId: string; undoToken: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -350,7 +351,7 @@ export function PlaylistSync() {
 
   const applyComparison = useCallback((payload: PlaylistComparisonPayload) => {
     setComparison(payload);
-    setSelectedUris(new Set(payload.inAOnly.map((track) => track.uri)));
+    setSelectedTrackIds(new Set(payload.inAOnly.map((track) => track.instanceId)));
   }, []);
 
   const handleCompare = useCallback(async () => {
@@ -396,7 +397,7 @@ export function PlaylistSync() {
       setPlaylistBSelection(nextBSelection);
       setPlaylistBInput(nextBInput);
 
-      setSelectedUris(new Set());
+      setSelectedTrackIds(new Set());
       setComparison(null);
       setActionMessage(null);
 
@@ -432,31 +433,36 @@ export function PlaylistSync() {
     ],
   );
 
-  const missingTracks = useMemo(() => comparison?.inAOnly ?? [], [comparison]);
+  const missingTracks = useMemo(
+    () => comparison?.playlistA.tracks.filter((track) => track.presence === "uniqueToA") ?? [],
+    [comparison],
+  );
 
   useEffect(() => {
     if (!comparison) {
-      setSelectedUris(new Set());
+      setSelectedTrackIds(new Set());
       return;
     }
 
-    setSelectedUris(new Set(comparison.inAOnly.map((track) => track.uri)));
+    setSelectedTrackIds(
+      new Set(comparison.playlistA.tracks.filter((track) => track.presence === "uniqueToA").map((track) => track.instanceId)),
+    );
   }, [comparison]);
 
   const selectedTrackDetails = useMemo(
-    () => missingTracks.filter((track) => selectedUris.has(track.uri)),
-    [missingTracks, selectedUris],
+    () => missingTracks.filter((track) => selectedTrackIds.has(track.instanceId)),
+    [missingTracks, selectedTrackIds],
   );
 
   const allSelected = selectedTrackDetails.length === missingTracks.length && missingTracks.length > 0;
 
-  const handleToggleSelection = useCallback((uri: string) => {
-    setSelectedUris((prev) => {
+  const handleToggleSelection = useCallback((instanceId: string) => {
+    setSelectedTrackIds((prev) => {
       const next = new Set(prev);
-      if (next.has(uri)) {
-        next.delete(uri);
+      if (next.has(instanceId)) {
+        next.delete(instanceId);
       } else {
-        next.add(uri);
+        next.add(instanceId);
       }
       return next;
     });
@@ -468,11 +474,11 @@ export function PlaylistSync() {
     }
 
     if (allSelected) {
-      setSelectedUris(new Set());
+      setSelectedTrackIds(new Set());
     } else {
-      setSelectedUris(new Set(comparison.inAOnly.map((track) => track.uri)));
+      setSelectedTrackIds(new Set(missingTracks.map((track) => track.instanceId)));
     }
-  }, [allSelected, comparison]);
+  }, [allSelected, comparison, missingTracks]);
 
   const handleOpenPreview = useCallback(() => {
     if (selectedTrackDetails.length === 0) {
@@ -515,11 +521,13 @@ export function PlaylistSync() {
     setActionMessage(null);
 
     try {
+      const trackUris = selectedTrackDetails.map((track) => track.uri);
+
       const response = await fetch("/api/spotify/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ targetPlaylistId, trackUris: Array.from(selectedUris) }),
+        body: JSON.stringify({ targetPlaylistId, trackUris }),
       });
 
       if (response.status === 401) {
@@ -561,7 +569,7 @@ export function PlaylistSync() {
       setIsSyncing(false);
       setIsPreviewOpen(false);
     }
-  }, [lastPair, playlistState.data, refreshComparison, selectedTrackDetails, selectedUris]);
+  }, [lastPair, playlistState.data, refreshComparison, selectedTrackDetails]);
 
   const handleUndo = useCallback(async () => {
     if (!lastUndo) {
@@ -741,7 +749,7 @@ export function PlaylistSync() {
           loading={isComparing || playlistState.loading}
           highlightPresence="uniqueToA"
           selectablePresence="uniqueToA"
-          selectedUris={selectedUris}
+          selectedTrackIds={selectedTrackIds}
           onToggle={handleToggleSelection}
         />
         <PlaylistColumn
@@ -751,7 +759,7 @@ export function PlaylistSync() {
           loading={isComparing || playlistState.loading}
           highlightPresence={null}
           selectablePresence={null}
-          selectedUris={selectedUris}
+          selectedTrackIds={selectedTrackIds}
           onToggle={handleToggleSelection}
         />
       </div>

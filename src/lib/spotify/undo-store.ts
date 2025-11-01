@@ -5,7 +5,8 @@ import type { SpotifyAccessContext } from "@/lib/spotify/client";
 interface UndoEntry {
   undoToken: string;
   playlistId: string;
-  uris: string[];
+  entries: { uri: string; position: number }[];
+  snapshotId: string | null;
   createdAt: number;
 }
 
@@ -18,15 +19,22 @@ function getSessionKey(context: SpotifyAccessContext): string {
 export function setUndoEntry(
   context: SpotifyAccessContext,
   playlistId: string,
-  uris: string[],
-): { undoToken: string } {
+  payload: { entries: { uri: string; position: number }[]; snapshotId: string | null },
+): { undoToken: string } | null {
+  const { entries, snapshotId } = payload;
+
+  if (entries.length === 0) {
+    return null;
+  }
+
   const sessionKey = getSessionKey(context);
   const undoToken = crypto.randomUUID();
 
   sessionUndoStore.set(sessionKey, {
     undoToken,
     playlistId,
-    uris,
+    entries,
+    snapshotId,
     createdAt: Date.now(),
   });
 
@@ -37,7 +45,7 @@ export function consumeUndoEntry(
   context: SpotifyAccessContext,
   playlistId: string,
   undoToken: string,
-): string[] | null {
+): { entries: { uri: string; position: number }[]; snapshotId: string | null } | null {
   const sessionKey = getSessionKey(context);
   const entry = sessionUndoStore.get(sessionKey);
 
@@ -54,5 +62,5 @@ export function consumeUndoEntry(
   }
 
   sessionUndoStore.delete(sessionKey);
-  return entry.uris;
+  return { entries: entry.entries, snapshotId: entry.snapshotId };
 }

@@ -47,9 +47,13 @@ export async function POST(request: NextRequest) {
     const filteredUris = await getFilteredCandidateUris(fetcher, targetPlaylistId, trackUris, {
       initialPlaylist: playlistDetails,
     });
-    const { addedUris } = await addTracksToPlaylist(fetcher, targetPlaylistId, filteredUris);
+    const { addedUris, addedEntries, snapshotId } = await addTracksToPlaylist(fetcher, targetPlaylistId, filteredUris, {
+      startingPosition: playlistDetails.tracks.total,
+    });
 
-    const undoToken = addedUris.length > 0 ? setUndoEntry(context, targetPlaylistId, addedUris).undoToken : null;
+    const undoResult =
+      addedEntries.length > 0 ? setUndoEntry(context, targetPlaylistId, { entries: addedEntries, snapshotId }) : null;
+    const undoToken = undoResult?.undoToken ?? null;
 
     const response = NextResponse.json({ addedUris, undoToken });
     applyContextCookies(response, context);
