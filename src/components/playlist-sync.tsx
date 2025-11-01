@@ -257,6 +257,23 @@ export function PlaylistSync() {
   const [lastUndo, setLastUndo] = useState<{ targetPlaylistId: string; undoToken: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
+  const editablePlaylists = useMemo(
+    () => playlistState.data?.filter((playlist) => playlist.isEditable) ?? [],
+    [playlistState.data],
+  );
+
+  useEffect(() => {
+    if (!playlistBSelection) {
+      return;
+    }
+
+    const stillEditable = editablePlaylists.some((playlist) => playlist.id === playlistBSelection);
+
+    if (!stillEditable) {
+      setPlaylistBSelection("");
+    }
+  }, [editablePlaylists, playlistBSelection]);
+
   const fetchProfileAndPlaylists = useCallback(async () => {
     setProfileState((prev) => ({ ...prev, loading: true, error: null }));
     setPlaylistState((prev) => ({ ...prev, loading: true, error: null }));
@@ -487,6 +504,12 @@ export function PlaylistSync() {
     }
 
     const targetPlaylistId = lastPair.playlistBId;
+    const targetSummary = playlistState.data?.find((playlist) => playlist.id === targetPlaylistId);
+
+    if (targetSummary && targetSummary.isEditable === false) {
+      setActionMessage({ type: "error", message: "You can only sync into playlists you own or that are collaborative." });
+      return;
+    }
 
     setIsSyncing(true);
     setActionMessage(null);
@@ -538,7 +561,7 @@ export function PlaylistSync() {
       setIsSyncing(false);
       setIsPreviewOpen(false);
     }
-  }, [lastPair, refreshComparison, selectedTrackDetails, selectedUris]);
+  }, [lastPair, playlistState.data, refreshComparison, selectedTrackDetails, selectedUris]);
 
   const handleUndo = useCallback(async () => {
     if (!lastUndo) {
@@ -639,10 +662,18 @@ export function PlaylistSync() {
             <label className="text-sm font-medium text-foreground">Playlist B (target)</label>
             <Select value={playlistBSelection} onValueChange={setPlaylistBSelection}>
               <SelectTrigger>
-                <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose playlist B"} />
+                <SelectValue
+                  placeholder={
+                    playlistState.loading
+                      ? "Loading playlists..."
+                      : editablePlaylists.length > 0
+                        ? "Choose playlist B"
+                        : "No editable playlists available"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                {playlistState.data?.map((playlist) => (
+                {editablePlaylists.map((playlist) => (
                   <SelectItem key={playlist.id} value={playlist.id}>
                     {playlist.name} ({playlist.trackCount})
                   </SelectItem>
@@ -656,6 +687,13 @@ export function PlaylistSync() {
               inputMode="url"
               className="h-12 text-base"
             />
+            {playlistState.loading ? null : editablePlaylists.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Create a playlist you own or ask the owner to make it collaborative before syncing.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Only playlists you can edit appear here.</p>
+            )}
           </div>
         </div>
 

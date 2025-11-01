@@ -31,8 +31,12 @@ export interface PlaylistSummary {
   description?: string | null;
   images: SpotifyImage[];
   ownerName?: string | null;
+  ownerId?: string | null;
   trackCount: number;
   externalUrl?: string;
+  isCollaborative?: boolean;
+  isOwned?: boolean;
+  isEditable?: boolean;
 }
 
 export interface PlaylistWithTracks {
