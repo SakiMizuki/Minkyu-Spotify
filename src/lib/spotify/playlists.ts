@@ -134,22 +134,24 @@ async function fetchAllPlaylistTracks(fetcher: SpotifyFetcher, initial: SpotifyP
     }
   }
 
-  let nextUrl = initial.tracks.next;
+  let nextUrl: string | null = initial.tracks.next ?? null;
 
-  while (nextUrl !== null) {
-    const page: {
-      items: SpotifyPlaylistTrackItem[];
-      next: string | null;
-    } = await fetcher(nextUrl);
+  while (typeof nextUrl === "string" && nextUrl.length > 0) {
+    const page = await fetcher<{
+      items?: SpotifyPlaylistTrackItem[];
+      next?: string | null;
+    }>(nextUrl);
 
-    for (const item of page.items) {
+    const items = Array.isArray(page.items) ? page.items : [];
+
+    for (const item of items) {
       const track = toSpotifyTrack(item);
       if (track) {
         tracks.push(track);
       }
     }
 
-    nextUrl = page.next;
+    nextUrl = page.next ?? null;
   }
 
   return tracks;
