@@ -7,33 +7,36 @@ import {
   applyContextCookies,
   getSpotifyClient,
 } from "@/lib/spotify/client";
-import { addTracksToPlaylist, getFilteredCandidateUris } from "@/lib/spotify/playlists";
-import { setUndoEntry } from "@/lib/spotify/undo-store";
+import { removeTracksFromPlaylist } from "@/lib/spotify/playlists";
+import { consumeUndoEntry } from "@/lib/spotify/undo-store";
 
-interface SyncRequestBody {
+interface UndoRequestBody {
   targetPlaylistId?: string;
-  trackUris?: string[];
+  undoToken?: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { targetPlaylistId, trackUris } = (await request.json()) as SyncRequestBody;
+    const { targetPlaylistId, undoToken } = (await request.json()) as UndoRequestBody;
 
     if (!targetPlaylistId) {
       return NextResponse.json({ error: "targetPlaylistId is required" }, { status: 400 });
     }
 
-    if (!Array.isArray(trackUris)) {
-      return NextResponse.json({ error: "trackUris must be an array" }, { status: 400 });
+    if (!undoToken) {
+      return NextResponse.json({ error: "undoToken is required" }, { status: 400 });
     }
 
     const { context, fetcher } = await getSpotifyClient(request);
-    const filteredUris = await getFilteredCandidateUris(fetcher, targetPlaylistId, trackUris);
-    const { addedUris } = await addTracksToPlaylist(fetcher, targetPlaylistId, filteredUris);
+    const uris = consumeUndoEntry(context, targetPlaylistId, undoToken);
 
-    const undoToken = addedUris.length > 0 ? setUndoEntry(context, targetPlaylistId, addedUris).undoToken : null;
+    if (!uris || uris.length === 0) {
+      return NextResponse.json({ error: "No undoable sync found" }, { status: 404 });
+    }
 
-    const response = NextResponse.json({ addedUris, undoToken });
+    const { removedUris } = await removeTracksFromPlaylist(fetcher, targetPlaylistId, uris);
+
+    const response = NextResponse.json({ removedUris });
     applyContextCookies(response, context);
     return response;
   } catch (error) {

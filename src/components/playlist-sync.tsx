@@ -10,8 +10,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import type { PlaylistComparison } from "@/lib/spotify/playlists";
-import type { PlaylistSummary, SpotifyTrack } from "@/types/spotify";
+import type {
+  ComparableTrack,
+  PlaylistComparisonPayload,
+  PlaylistTrackWithPresence,
+  TrackPresence,
+} from "@/lib/spotify/playlists";
+import type { PlaylistSummary } from "@/types/spotify";
 
 interface SpotifyUserProfile {
   display_name?: string | null;
@@ -53,63 +58,126 @@ function extractPlaylistId(value: string): PlaylistIdentifier {
   return null;
 }
 
-function TrackRow({ track, highlight, badge }: { track: SpotifyTrack; highlight: boolean; badge?: string }) {
+function formatDuration(durationMs: number): string {
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+interface PlaylistTrackRowProps {
+  track: PlaylistTrackWithPresence;
+  highlightPresence?: TrackPresence | null;
+  selectablePresence: TrackPresence | null;
+  selectedUris: Set<string>;
+  onToggle: (uri: string) => void;
+}
+
+function PlaylistTrackRow({
+  track,
+  highlightPresence = null,
+  selectablePresence,
+  selectedUris,
+  onToggle,
+}: PlaylistTrackRowProps) {
+  const isHighlight = highlightPresence ? track.presence === highlightPresence : false;
+  const isSelectable = selectablePresence ? track.presence === selectablePresence : false;
+  const isChecked = isSelectable ? selectedUris.has(track.uri) : false;
+
   return (
-    <div
-      className={`flex flex-col gap-1 rounded-md border px-3 py-2 text-sm transition-colors ${
-        highlight ? "border-amber-500/40 bg-amber-50" : "border-transparent bg-muted/40"
+    <label
+      className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-sm shadow-sm transition-colors ${
+        isHighlight
+          ? "border-amber-400/60 bg-amber-50"
+          : track.presence === "common"
+            ? "border-transparent bg-muted/30"
+            : "border-sky-400/40 bg-sky-50"
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-medium text-foreground">{track.name}</p>
-        {badge ? <span className="rounded bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">{badge}</span> : null}
+      {isSelectable ? (
+        <input
+          type="checkbox"
+          className="h-6 w-6 flex-shrink-0 rounded-md border-2 border-primary text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          checked={isChecked}
+          onChange={() => onToggle(track.uri)}
+        />
+      ) : (
+        <span className="h-6 w-6 flex-shrink-0" aria-hidden="true" />
+      )}
+
+      <div className="flex flex-1 flex-col gap-1">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+          <p className="font-medium text-foreground">{track.name}</p>
+          <span className="text-xs text-muted-foreground">{formatDuration(track.durationMs)}</span>
+        </div>
+        <p className="text-xs text-muted-foreground">{track.artists.join(", ")}</p>
       </div>
-      <p className="text-xs text-muted-foreground">
-        {track.artists.map((artist) => artist.name).join(", ")} ? {track.album.name}
-      </p>
-    </div>
+
+      {isHighlight ? (
+        <span className="whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
+          Missing
+        </span>
+      ) : track.presence !== "common" ? (
+        <span className="whitespace-nowrap rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-900">
+          Extra
+        </span>
+      ) : null}
+    </label>
   );
 }
 
 interface PlaylistColumnProps {
-  title: string;
-  playlist?: PlaylistSummary;
-  tracks?: SpotifyTrack[];
-  missingUris: Set<string>;
-  missingLabel: string;
+  label: string;
+  summary?: PlaylistSummary;
+  tracks?: PlaylistTrackWithPresence[];
   loading: boolean;
+  highlightPresence?: TrackPresence | null;
+  selectablePresence: TrackPresence | null;
+  selectedUris: Set<string>;
+  onToggle: (uri: string) => void;
 }
 
-function PlaylistColumn({ title, playlist, tracks, missingUris, missingLabel, loading }: PlaylistColumnProps) {
+function PlaylistColumn({
+  label,
+  summary,
+  tracks,
+  loading,
+  highlightPresence,
+  selectablePresence,
+  selectedUris,
+  onToggle,
+}: PlaylistColumnProps) {
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
+      <CardHeader className="gap-2">
+        <CardTitle>{label}</CardTitle>
         <CardDescription>
-          {loading && !playlist ? (
+          {loading && !summary ? (
             <Skeleton className="h-4 w-40" />
-          ) : playlist ? (
+          ) : summary ? (
             <span className="flex flex-col gap-1">
-              <span className="font-semibold text-foreground">{playlist.name}</span>
-              <span className="text-xs text-muted-foreground">{playlist.trackCount} tracks</span>
+              <span className="font-semibold text-foreground">{summary.name}</span>
+              <span className="text-xs text-muted-foreground">{summary.trackCount} tracks</span>
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">Select a playlist to see details</span>
           )}
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-1 flex-col gap-3">
-        <ScrollArea className="h-[420px] rounded-md border bg-muted/30 p-3">
-          <div className="grid gap-2">
+      <CardContent className="flex flex-1 flex-col">
+        <ScrollArea className="h-[420px] rounded-xl border bg-muted/20 p-3">
+          <div className="flex flex-col gap-3">
             {loading && !tracks ? (
-              Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-14 w-full rounded-md" />)
+              Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-20 w-full rounded-xl" />)
             ) : tracks && tracks.length > 0 ? (
               tracks.map((track) => (
-                <TrackRow
+                <PlaylistTrackRow
                   key={track.uri}
                   track={track}
-                  highlight={missingUris.has(track.uri)}
-                  badge={missingUris.has(track.uri) ? missingLabel : undefined}
+                  highlightPresence={highlightPresence}
+                  selectablePresence={selectablePresence}
+                  selectedUris={selectedUris}
+                  onToggle={onToggle}
                 />
               ))
             ) : (
@@ -119,6 +187,47 @@ function PlaylistColumn({ title, playlist, tracks, missingUris, missingLabel, lo
         </ScrollArea>
       </CardContent>
     </Card>
+  );
+}
+
+interface PreviewModalProps {
+  open: boolean;
+  tracks: ComparableTrack[];
+  onCancel: () => void;
+  onConfirm: () => void;
+  isSyncing: boolean;
+}
+
+function PreviewModal({ open, tracks, onCancel, onConfirm, isSyncing }: PreviewModalProps) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4 pb-6 pt-12 sm:items-center">
+      <div className="w-full max-w-lg rounded-3xl bg-card p-6 shadow-2xl">
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold text-foreground">Preview sync</h2>
+          <p className="text-sm text-muted-foreground">Review the tracks that will be added before you continue.</p>
+        </div>
+        <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
+          {tracks.map((track) => (
+            <div key={track.uri} className="rounded-2xl border border-muted-foreground/10 bg-muted/30 px-3 py-2 text-sm">
+              <p className="font-medium text-foreground">{track.name}</p>
+              <p className="text-xs text-muted-foreground">{track.artists.join(", ")}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Button variant="outline" onClick={onCancel} disabled={isSyncing}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} disabled={isSyncing}>
+            {isSyncing ? "Syncing..." : `Confirm (${tracks.length})`}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -133,14 +242,19 @@ export function PlaylistSync() {
     loading: true,
     error: null,
   });
-  const [sourceSelection, setSourceSelection] = useState<string>("");
-  const [targetSelection, setTargetSelection] = useState<string>("");
-  const [sourceInput, setSourceInput] = useState<string>("");
-  const [targetInput, setTargetInput] = useState<string>("");
-  const [comparison, setComparison] = useState<PlaylistComparison | null>(null);
+  const [playlistASelection, setPlaylistASelection] = useState<string>("");
+  const [playlistBSelection, setPlaylistBSelection] = useState<string>("");
+  const [playlistAInput, setPlaylistAInput] = useState<string>("");
+  const [playlistBInput, setPlaylistBInput] = useState<string>("");
+  const [comparison, setComparison] = useState<PlaylistComparisonPayload | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [twoWaySync, setTwoWaySync] = useState(false);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isSwapActive, setIsSwapActive] = useState(false);
+  const [selectedUris, setSelectedUris] = useState<Set<string>>(new Set());
+  const [lastPair, setLastPair] = useState<{ playlistAId: string; playlistBId: string } | null>(null);
+  const [lastUndo, setLastUndo] = useState<{ targetPlaylistId: string; undoToken: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const fetchProfileAndPlaylists = useCallback(async () => {
@@ -172,8 +286,16 @@ export function PlaylistSync() {
       setPlaylistState({ data: playlistsJson.playlists, loading: false, error: null });
     } catch (error) {
       console.error(error);
-      setProfileState({ data: null, loading: false, error: error instanceof Error ? error.message : "Failed to load profile." });
-      setPlaylistState({ data: null, loading: false, error: error instanceof Error ? error.message : "Failed to load playlists." });
+      setProfileState({
+        data: null,
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to load profile.",
+      });
+      setPlaylistState({
+        data: null,
+        loading: false,
+        error: error instanceof Error ? error.message : "Failed to load playlists.",
+      });
     }
   }, []);
 
@@ -181,23 +303,45 @@ export function PlaylistSync() {
     void fetchProfileAndPlaylists();
   }, [fetchProfileAndPlaylists]);
 
-  const resolvePlaylistId = useCallback(
-    (selection: string, inputValue: string): PlaylistIdentifier => {
-      if (selection) {
-        return selection;
-      }
+  const resolvePlaylistId = useCallback((selection: string, inputValue: string): PlaylistIdentifier => {
+    if (selection) {
+      return selection;
+    }
 
-      return extractPlaylistId(inputValue);
-    },
-    [],
-  );
+    return extractPlaylistId(inputValue);
+  }, []);
+
+  const fetchComparison = useCallback(async (playlistAId: string, playlistBId: string) => {
+    const response = await fetch("/api/spotify/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ sourcePlaylistId: playlistAId, targetPlaylistId: playlistBId }),
+    });
+
+    if (response.status === 401) {
+      throw new Error("Your session has expired. Please log in again.");
+    }
+
+    if (!response.ok) {
+      const details = await response.json().catch(() => ({}));
+      throw new Error(details.error ?? "Failed to compare playlists.");
+    }
+
+    return (await response.json()) as PlaylistComparisonPayload;
+  }, []);
+
+  const applyComparison = useCallback((payload: PlaylistComparisonPayload) => {
+    setComparison(payload);
+    setSelectedUris(new Set(payload.inAOnly.map((track) => track.uri)));
+  }, []);
 
   const handleCompare = useCallback(async () => {
-    const sourceId = resolvePlaylistId(sourceSelection, sourceInput);
-    const targetId = resolvePlaylistId(targetSelection, targetInput);
+    const playlistAId = resolvePlaylistId(playlistASelection, playlistAInput);
+    const playlistBId = resolvePlaylistId(playlistBSelection, playlistBInput);
 
-    if (!sourceId || !targetId) {
-      setActionMessage({ type: "error", message: "Please choose or paste valid playlist IDs for both sides." });
+    if (!playlistAId || !playlistBId) {
+      setActionMessage({ type: "error", message: "Please choose or paste valid playlist IDs for both playlists." });
       return;
     }
 
@@ -205,26 +349,9 @@ export function PlaylistSync() {
     setActionMessage(null);
 
     try {
-      const response = await fetch("/api/spotify/compare", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({ sourcePlaylistId: sourceId, targetPlaylistId: targetId }),
-      });
-
-      if (response.status === 401) {
-        throw new Error("Your session has expired. Please log in again.");
-      }
-
-      if (!response.ok) {
-        const details = await response.json().catch(() => ({}));
-        throw new Error(details.error ?? "Failed to compare playlists.");
-      }
-
-      const comparisonJson = (await response.json()) as PlaylistComparison;
-      setComparison(comparisonJson);
+      const payload = await fetchComparison(playlistAId, playlistBId);
+      applyComparison(payload);
+      setLastPair({ playlistAId, playlistBId });
       setActionMessage({ type: "success", message: "Comparison complete." });
     } catch (error) {
       console.error(error);
@@ -232,21 +359,134 @@ export function PlaylistSync() {
     } finally {
       setIsComparing(false);
     }
-  }, [resolvePlaylistId, sourceSelection, sourceInput, targetSelection, targetInput]);
+  }, [applyComparison, fetchComparison, playlistAInput, playlistASelection, playlistBInput, playlistBSelection, resolvePlaylistId]);
 
-  const handleSync = useCallback(async () => {
+  const handleSwap = useCallback(
+    async (checked: boolean) => {
+      if (checked === isSwapActive) {
+        return;
+      }
+
+      setIsSwapActive(checked);
+
+      const nextASelection = playlistBSelection;
+      const nextAInput = playlistBInput;
+      const nextBSelection = playlistASelection;
+      const nextBInput = playlistAInput;
+
+      setPlaylistASelection(nextASelection);
+      setPlaylistAInput(nextAInput);
+      setPlaylistBSelection(nextBSelection);
+      setPlaylistBInput(nextBInput);
+
+      setSelectedUris(new Set());
+      setComparison(null);
+      setActionMessage(null);
+
+      const playlistAId = resolvePlaylistId(nextASelection, nextAInput);
+      const playlistBId = resolvePlaylistId(nextBSelection, nextBInput);
+
+      if (!playlistAId || !playlistBId) {
+        setLastPair(null);
+        return;
+      }
+
+      setIsComparing(true);
+      try {
+        const payload = await fetchComparison(playlistAId, playlistBId);
+        applyComparison(payload);
+        setLastPair({ playlistAId, playlistBId });
+      } catch (error) {
+        console.error(error);
+        setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to compare playlists." });
+      } finally {
+        setIsComparing(false);
+      }
+    },
+    [
+      applyComparison,
+      fetchComparison,
+      isSwapActive,
+      playlistAInput,
+      playlistASelection,
+      playlistBInput,
+      playlistBSelection,
+      resolvePlaylistId,
+    ],
+  );
+
+  const missingTracks = useMemo(() => comparison?.inAOnly ?? [], [comparison]);
+
+  useEffect(() => {
     if (!comparison) {
+      setSelectedUris(new Set());
+      return;
+    }
+
+    setSelectedUris(new Set(comparison.inAOnly.map((track) => track.uri)));
+  }, [comparison]);
+
+  const selectedTrackDetails = useMemo(
+    () => missingTracks.filter((track) => selectedUris.has(track.uri)),
+    [missingTracks, selectedUris],
+  );
+
+  const allSelected = selectedTrackDetails.length === missingTracks.length && missingTracks.length > 0;
+
+  const handleToggleSelection = useCallback((uri: string) => {
+    setSelectedUris((prev) => {
+      const next = new Set(prev);
+      if (next.has(uri)) {
+        next.delete(uri);
+      } else {
+        next.add(uri);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleSelectAll = useCallback(() => {
+    if (!comparison) {
+      return;
+    }
+
+    if (allSelected) {
+      setSelectedUris(new Set());
+    } else {
+      setSelectedUris(new Set(comparison.inAOnly.map((track) => track.uri)));
+    }
+  }, [allSelected, comparison]);
+
+  const handleOpenPreview = useCallback(() => {
+    if (selectedTrackDetails.length === 0) {
+      setActionMessage({ type: "error", message: "Select at least one track to sync." });
+      return;
+    }
+
+    setIsPreviewOpen(true);
+  }, [selectedTrackDetails.length]);
+
+  const refreshComparison = useCallback(async () => {
+    if (!lastPair) {
+      return;
+    }
+
+    try {
+      const payload = await fetchComparison(lastPair.playlistAId, lastPair.playlistBId);
+      applyComparison(payload);
+    } catch (error) {
+      console.error(error);
+      setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to refresh playlists." });
+    }
+  }, [applyComparison, fetchComparison, lastPair]);
+
+  const handleConfirmSync = useCallback(async () => {
+    if (!lastPair) {
       setActionMessage({ type: "error", message: "Compare playlists before syncing." });
       return;
     }
 
-    const sourceId = resolvePlaylistId(sourceSelection, sourceInput);
-    const targetId = resolvePlaylistId(targetSelection, targetInput);
-
-    if (!sourceId || !targetId) {
-      setActionMessage({ type: "error", message: "Missing playlist IDs." });
-      return;
-    }
+    const targetPlaylistId = lastPair.playlistBId;
 
     setIsSyncing(true);
     setActionMessage(null);
@@ -256,7 +496,7 @@ export function PlaylistSync() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ sourcePlaylistId: sourceId, targetPlaylistId: targetId, twoWay: twoWaySync }),
+        body: JSON.stringify({ targetPlaylistId, trackUris: Array.from(selectedUris) }),
       });
 
       if (response.status === 401) {
@@ -268,42 +508,87 @@ export function PlaylistSync() {
         throw new Error(details.error ?? "Failed to sync playlists.");
       }
 
-      const result = await response.json();
-      setComparison(result.comparison as PlaylistComparison);
-      setActionMessage({
-        type: "success",
-        message: twoWaySync
-          ? `Sync complete. Added ${result.addedToTarget} tracks to target and ${result.addedToSource} to source.`
-          : `Sync complete. Added ${result.addedToTarget} tracks to target playlist.`,
-      });
+      const { addedUris, undoToken } = (await response.json()) as { addedUris: string[]; undoToken: string | null };
+
+      if (addedUris.length === 0) {
+        setActionMessage({ type: "error", message: "No new tracks were added. The target already has these songs." });
+        setLastUndo(null);
+        return;
+      }
+
+      if (undoToken) {
+        setLastUndo({ targetPlaylistId, undoToken });
+      } else {
+        setLastUndo(null);
+      }
+
+      const addedTracks = selectedTrackDetails.filter((track) => addedUris.includes(track.uri));
+      const previewNames = addedTracks.slice(0, 3).map((track) => track.name).join(", ");
+      const summarySuffix = addedTracks.length > 3 ? ", ..." : "";
+      const summary = `Added ${addedUris.length} track${addedUris.length === 1 ? "" : "s"}${
+        previewNames ? `: ${previewNames}${summarySuffix}` : ""
+      }`;
+      setActionMessage({ type: "success", message: summary });
+
+      await refreshComparison();
     } catch (error) {
       console.error(error);
       setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to sync playlists." });
     } finally {
       setIsSyncing(false);
+      setIsPreviewOpen(false);
     }
-  }, [comparison, resolvePlaylistId, sourceSelection, sourceInput, targetSelection, targetInput, twoWaySync]);
+  }, [lastPair, refreshComparison, selectedTrackDetails, selectedUris]);
 
-  const sourceMissingUris = useMemo(
-    () => new Set(comparison?.missingInSource.map((track) => track.uri) ?? []),
-    [comparison],
-  );
-  const targetMissingUris = useMemo(
-    () => new Set(comparison?.missingInTarget.map((track) => track.uri) ?? []),
-    [comparison],
-  );
+  const handleUndo = useCallback(async () => {
+    if (!lastUndo) {
+      return;
+    }
 
-  const hasMissingTracks = (comparison?.missingInTarget.length ?? 0) > 0 || (comparison?.missingInSource.length ?? 0) > 0;
+    setIsUndoing(true);
+    setActionMessage(null);
 
-  const disableSyncButton = !comparison || (!twoWaySync && (comparison?.missingInTarget.length ?? 0) === 0) || (twoWaySync && !hasMissingTracks);
+    try {
+      const response = await fetch("/api/spotify/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ targetPlaylistId: lastUndo.targetPlaylistId, undoToken: lastUndo.undoToken }),
+      });
+
+      if (response.status === 401) {
+        throw new Error("Your session has expired. Please log in again.");
+      }
+
+      if (!response.ok) {
+        const details = await response.json().catch(() => ({}));
+        throw new Error(details.error ?? "Failed to undo the last sync.");
+      }
+
+      const { removedUris } = (await response.json()) as { removedUris: string[] };
+      setLastUndo(null);
+      setActionMessage({
+        type: "success",
+        message: `Removed ${removedUris.length} track${removedUris.length === 1 ? "" : "s"} from the target playlist.`,
+      });
+
+      await refreshComparison();
+    } catch (error) {
+      console.error(error);
+      setActionMessage({ type: "error", message: error instanceof Error ? error.message : "Failed to undo the last sync." });
+    } finally {
+      setIsUndoing(false);
+    }
+  }, [lastUndo, refreshComparison]);
+
   const loadError = profileState.error ?? playlistState.error;
 
   return (
-    <section className="flex flex-col gap-6">
+    <section className="relative flex flex-col gap-6 pb-32">
       <header className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold text-foreground">Minkyu Spotify</h1>
         <p className="text-sm text-muted-foreground">
-          Sync playlists effortlessly. Compare track lists, find missing records, and keep your collections aligned.
+          Compare playlists side by side, pick the tracks you want, and sync them in one tap.
         </p>
         {profileState.data ? (
           <p className="text-sm text-muted-foreground">
@@ -326,13 +611,13 @@ export function PlaylistSync() {
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 rounded-lg border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="grid gap-4 rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-foreground">Source playlist</label>
-            <Select value={sourceSelection} onValueChange={setSourceSelection}>
+            <label className="text-sm font-medium text-foreground">Playlist A (source)</label>
+            <Select value={playlistASelection} onValueChange={setPlaylistASelection}>
               <SelectTrigger>
-                <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose source playlist"} />
+                <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose playlist A"} />
               </SelectTrigger>
               <SelectContent>
                 {playlistState.data?.map((playlist) => (
@@ -344,15 +629,17 @@ export function PlaylistSync() {
             </Select>
             <Input
               placeholder="Or paste a playlist URL or ID"
-              value={sourceInput}
-              onChange={(event) => setSourceInput(event.target.value)}
+              value={playlistAInput}
+              onChange={(event) => setPlaylistAInput(event.target.value)}
+              inputMode="url"
+              className="h-12 text-base"
             />
           </div>
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-foreground">Target playlist</label>
-            <Select value={targetSelection} onValueChange={setTargetSelection}>
+            <label className="text-sm font-medium text-foreground">Playlist B (target)</label>
+            <Select value={playlistBSelection} onValueChange={setPlaylistBSelection}>
               <SelectTrigger>
-                <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose target playlist"} />
+                <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose playlist B"} />
               </SelectTrigger>
               <SelectContent>
                 {playlistState.data?.map((playlist) => (
@@ -364,25 +651,32 @@ export function PlaylistSync() {
             </Select>
             <Input
               placeholder="Or paste a playlist URL or ID"
-              value={targetInput}
-              onChange={(event) => setTargetInput(event.target.value)}
+              value={playlistBInput}
+              onChange={(event) => setPlaylistBInput(event.target.value)}
+              inputMode="url"
+              className="h-12 text-base"
             />
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-md bg-muted/50 p-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2">
-            <Switch id="two-way-sync" checked={twoWaySync} onCheckedChange={setTwoWaySync} />
-            <label htmlFor="two-way-sync" className="text-sm text-foreground">
-              Two-way sync (add missing tracks to both playlists)
+        <div className="flex flex-col gap-3 rounded-2xl bg-muted/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Switch id="swap-toggle" checked={isSwapActive} onCheckedChange={handleSwap} />
+            <label htmlFor="swap-toggle" className="text-sm text-foreground">
+              Swap A/B (sync direction)
             </label>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button onClick={handleCompare} disabled={isComparing || playlistState.loading}>
+            <Button onClick={handleCompare} disabled={isComparing || playlistState.loading} className="h-12 text-base">
               {isComparing ? "Comparing..." : "Compare playlists"}
             </Button>
-            <Button variant="secondary" onClick={handleSync} disabled={disableSyncButton || isSyncing}>
-              {isSyncing ? "Syncing..." : "Sync missing tracks"}
+            <Button
+              variant="secondary"
+              onClick={handleOpenPreview}
+              disabled={selectedTrackDetails.length === 0 || isSyncing || !comparison}
+              className="h-12 text-base"
+            >
+              Preview sync
             </Button>
           </div>
         </div>
@@ -393,32 +687,75 @@ export function PlaylistSync() {
           <CardHeader>
             <CardTitle className="text-lg">Comparison results</CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
-              {comparison.missingInTarget.length === 0 && comparison.missingInSource.length === 0
+              {comparison.inAOnly.length === 0 && comparison.inBOnly.length === 0
                 ? "Playlists are already in sync."
-                : `Missing ${comparison.missingInTarget.length} track(s) in target and ${comparison.missingInSource.length} in source.`}
+                : `Missing ${comparison.inAOnly.length} track${comparison.inAOnly.length === 1 ? "" : "s"} in playlist B and ${comparison.inBOnly.length} in playlist A.`}
             </CardDescription>
           </CardHeader>
         </Card>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <PlaylistColumn
-          title="Source playlist"
-          playlist={comparison?.source.summary}
-          tracks={comparison?.source.tracks}
-          missingUris={targetMissingUris}
-          missingLabel="Missing in target"
+          label="Playlist A"
+          summary={comparison?.playlistA.summary}
+          tracks={comparison?.playlistA.tracks}
           loading={isComparing || playlistState.loading}
+          highlightPresence="uniqueToA"
+          selectablePresence="uniqueToA"
+          selectedUris={selectedUris}
+          onToggle={handleToggleSelection}
         />
         <PlaylistColumn
-          title="Target playlist"
-          playlist={comparison?.target.summary}
-          tracks={comparison?.target.tracks}
-          missingUris={sourceMissingUris}
-          missingLabel="Missing in source"
+          label="Playlist B"
+          summary={comparison?.playlistB.summary}
+          tracks={comparison?.playlistB.tracks}
           loading={isComparing || playlistState.loading}
+          highlightPresence={null}
+          selectablePresence={null}
+          selectedUris={selectedUris}
+          onToggle={handleToggleSelection}
         />
       </div>
+
+      <PreviewModal
+        open={isPreviewOpen}
+        tracks={selectedTrackDetails}
+        onCancel={() => setIsPreviewOpen(false)}
+        onConfirm={handleConfirmSync}
+        isSyncing={isSyncing}
+      />
+
+      {comparison ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-lg backdrop-blur">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <Button onClick={handleToggleSelectAll} variant="outline" className="h-14 flex-1 text-base">
+              {allSelected ? "Deselect All" : "Select All"}
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedTrackDetails.length === 0) {
+                  setActionMessage({ type: "error", message: "Select at least one track first." });
+                  return;
+                }
+                setIsPreviewOpen(true);
+              }}
+              disabled={selectedTrackDetails.length === 0 || isSyncing}
+              className="h-14 flex-1 text-base"
+            >
+              {isSyncing ? "Syncing..." : `Sync Selected (${selectedTrackDetails.length})`}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleUndo}
+              disabled={!lastUndo || isUndoing}
+              className="h-14 flex-1 text-base"
+            >
+              {isUndoing ? "Undoing..." : "Undo"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

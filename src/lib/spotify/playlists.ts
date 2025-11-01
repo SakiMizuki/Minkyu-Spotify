@@ -51,11 +51,32 @@ interface SpotifyPlaylistResponse extends SpotifyPlaylistItem {
   };
 }
 
-export interface PlaylistComparison {
-  source: PlaylistWithTracks;
-  target: PlaylistWithTracks;
-  missingInTarget: SpotifyTrack[];
-  missingInSource: SpotifyTrack[];
+export type TrackPresence = "uniqueToA" | "uniqueToB" | "common";
+
+export interface ComparableTrack {
+  uri: string;
+  name: string;
+  artists: string[];
+  durationMs: number;
+  imageUrl: string | null;
+}
+
+export interface PlaylistTrackWithPresence extends ComparableTrack {
+  presence: TrackPresence;
+}
+
+export interface PlaylistComparisonPayload {
+  playlistA: {
+    summary: PlaylistSummary;
+    tracks: PlaylistTrackWithPresence[];
+  };
+  playlistB: {
+    summary: PlaylistSummary;
+    tracks: PlaylistTrackWithPresence[];
+  };
+  inAOnly: ComparableTrack[];
+  inBOnly: ComparableTrack[];
+  inBoth: ComparableTrack[];
 }
 
 function toPlaylistSummary(playlist: SpotifyPlaylistItem): PlaylistSummary {
@@ -149,43 +170,100 @@ export async function getPlaylistWithTracks(fetcher: SpotifyFetcher, playlistId:
   };
 }
 
+function toComparableTrack(track: SpotifyTrack): ComparableTrack {
+  return {
+    uri: track.uri,
+    name: track.name,
+    artists: track.artists.map((artist) => artist.name),
+    durationMs: track.duration_ms,
+    imageUrl: track.album.images.at(0)?.url ?? null,
+  };
+}
+
+function createPresenceTrack(track: ComparableTrack, presence: TrackPresence): PlaylistTrackWithPresence {
+  return {
+    ...track,
+    presence,
+  };
+}
+
 export async function comparePlaylistsWithFetcher(
   fetcher: SpotifyFetcher,
-  sourceId: string,
-  targetId: string,
-): Promise<PlaylistComparison> {
-  const [sourceResponse, targetResponse] = await Promise.all([
+  playlistAId: string,
+  playlistBId: string,
+): Promise<PlaylistComparisonPayload> {
+  const [playlistAResponse, playlistBResponse] = await Promise.all([
     fetcher<SpotifyPlaylistResponse>(
-      `/playlists/${sourceId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+      `/playlists/${playlistAId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
     ),
     fetcher<SpotifyPlaylistResponse>(
-      `/playlists/${targetId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+      `/playlists/${playlistBId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
     ),
   ]);
 
-  const [sourceTracks, targetTracks] = await Promise.all([
-    fetchAllPlaylistTracks(fetcher, sourceResponse),
-    fetchAllPlaylistTracks(fetcher, targetResponse),
+  const [playlistATracksRaw, playlistBTracksRaw] = await Promise.all([
+    fetchAllPlaylistTracks(fetcher, playlistAResponse),
+    fetchAllPlaylistTracks(fetcher, playlistBResponse),
   ]);
 
-  const sourcePlaylist: PlaylistWithTracks = {
-    summary: toPlaylistSummary(sourceResponse),
-    tracks: sourceTracks,
-  };
+  const playlistATracks = playlistATracksRaw.map(toComparableTrack);
+  const playlistBTracks = playlistBTracksRaw.map(toComparableTrack);
 
-  const targetPlaylist: PlaylistWithTracks = {
-    summary: toPlaylistSummary(targetResponse),
-    tracks: targetTracks,
-  };
+  const playlistBUriSet = new Set(playlistBTracks.map((track) => track.uri));
+  const playlistAUriSet = new Set(playlistATracks.map((track) => track.uri));
 
-  const sourceUris = new Set(sourceTracks.map((track) => track.uri));
-  const targetUris = new Set(targetTracks.map((track) => track.uri));
+  const inAOnly: ComparableTrack[] = [];
+  const inBOnly: ComparableTrack[] = [];
+  const inBoth: ComparableTrack[] = [];
+
+  const seenUniqueA = new Set<string>();
+  const seenUniqueB = new Set<string>();
+  const seenCommon = new Set<string>();
+
+  const playlistATracksWithPresence = playlistATracks.map((track) => {
+    const presence: TrackPresence = playlistBUriSet.has(track.uri) ? "common" : "uniqueToA";
+
+    if (presence === "common" && !seenCommon.has(track.uri)) {
+      inBoth.push(track);
+      seenCommon.add(track.uri);
+    }
+
+    if (presence === "uniqueToA" && !seenUniqueA.has(track.uri)) {
+      inAOnly.push(track);
+      seenUniqueA.add(track.uri);
+    }
+
+    return createPresenceTrack(track, presence);
+  });
+
+  const playlistBTracksWithPresence = playlistBTracks.map((track) => {
+    const presence: TrackPresence = playlistAUriSet.has(track.uri) ? "common" : "uniqueToB";
+
+    if (presence === "uniqueToB" && !seenUniqueB.has(track.uri)) {
+      inBOnly.push(track);
+      seenUniqueB.add(track.uri);
+    }
+
+    if (presence === "common" && !seenCommon.has(track.uri)) {
+      inBoth.push(track);
+      seenCommon.add(track.uri);
+    }
+
+    return createPresenceTrack(track, presence);
+  });
 
   return {
-    source: sourcePlaylist,
-    target: targetPlaylist,
-    missingInTarget: sourceTracks.filter((track) => !targetUris.has(track.uri)),
-    missingInSource: targetTracks.filter((track) => !sourceUris.has(track.uri)),
+    playlistA: {
+      summary: toPlaylistSummary(playlistAResponse),
+      tracks: playlistATracksWithPresence,
+    },
+    playlistB: {
+      summary: toPlaylistSummary(playlistBResponse),
+      tracks: playlistBTracksWithPresence,
+    },
+    inAOnly,
+    inBOnly,
+    inBoth,
   };
 }
 
@@ -199,10 +277,20 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-export async function addTracksToPlaylist(fetcher: SpotifyFetcher, playlistId: string, uris: string[]): Promise<number> {
-  let totalAdded = 0;
+export async function addTracksToPlaylist(
+  fetcher: SpotifyFetcher,
+  playlistId: string,
+  uris: string[],
+): Promise<{ addedCount: number; addedUris: string[] }> {
+  const uniqueUris = Array.from(new Set(uris));
 
-  for (const chunk of chunkArray(uris, 100)) {
+  if (uniqueUris.length === 0) {
+    return { addedCount: 0, addedUris: [] };
+  }
+
+  const addedUris: string[] = [];
+
+  for (const chunk of chunkArray(uniqueUris, 100)) {
     if (chunk.length === 0) {
       continue;
     }
@@ -212,35 +300,60 @@ export async function addTracksToPlaylist(fetcher: SpotifyFetcher, playlistId: s
       body: JSON.stringify({ uris: chunk }),
     });
 
-    totalAdded += chunk.length;
+    addedUris.push(...chunk);
   }
 
-  return totalAdded;
+  return { addedCount: addedUris.length, addedUris };
 }
 
-export async function syncPlaylistsWithFetcher(
+export async function removeTracksFromPlaylist(
   fetcher: SpotifyFetcher,
-  sourceId: string,
-  targetId: string,
-  twoWay: boolean,
-): Promise<{
-  addedToTarget: number;
-  addedToSource: number;
-  comparison: PlaylistComparison;
-}> {
-  const comparison = await comparePlaylistsWithFetcher(fetcher, sourceId, targetId);
+  playlistId: string,
+  uris: string[],
+): Promise<{ removedCount: number; removedUris: string[] }> {
+  const uniqueUris = Array.from(new Set(uris));
 
-  const missingInTargetUris = comparison.missingInTarget.map((track) => track.uri);
-  const missingInSourceUris = comparison.missingInSource.map((track) => track.uri);
+  if (uniqueUris.length === 0) {
+    return { removedCount: 0, removedUris: [] };
+  }
 
-  const addedToTarget = await addTracksToPlaylist(fetcher, targetId, missingInTargetUris);
-  const addedToSource = twoWay ? await addTracksToPlaylist(fetcher, sourceId, missingInSourceUris) : 0;
+  const removedUris: string[] = [];
 
-  const updatedComparison = await comparePlaylistsWithFetcher(fetcher, sourceId, targetId);
+  for (const chunk of chunkArray(uniqueUris, 100)) {
+    if (chunk.length === 0) {
+      continue;
+    }
 
-  return {
-    addedToTarget,
-    addedToSource,
-    comparison: updatedComparison,
-  };
+    await fetcher<{ snapshot_id: string }>(`/playlists/${playlistId}/tracks`, {
+      method: "DELETE",
+      body: JSON.stringify({
+        tracks: chunk.map((uri) => ({ uri })),
+      }),
+    });
+
+    removedUris.push(...chunk);
+  }
+
+  return { removedCount: removedUris.length, removedUris };
+}
+
+export async function getFilteredCandidateUris(
+  fetcher: SpotifyFetcher,
+  playlistId: string,
+  candidateUris: string[],
+): Promise<string[]> {
+  const uniqueCandidates = Array.from(new Set(candidateUris));
+
+  if (uniqueCandidates.length === 0) {
+    return [];
+  }
+
+  const playlistResponse = await fetcher<SpotifyPlaylistResponse>(
+    `/playlists/${playlistId}?fields=id,name,description,images,owner(display_name),tracks(total,items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next),external_urls`,
+  );
+
+  const existingTracks = await fetchAllPlaylistTracks(fetcher, playlistResponse);
+  const existingUris = new Set(existingTracks.map((track) => track.uri));
+
+  return uniqueCandidates.filter((uri) => !existingUris.has(uri));
 }
