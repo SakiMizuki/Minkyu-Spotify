@@ -1067,18 +1067,22 @@ export function PlaylistSync() {
 
   return (
     <section className="relative flex flex-col gap-6 pb-32">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold text-foreground">Minkyu Spotify</h1>
-        <p className="text-sm text-muted-foreground">
-          Compare playlists side by side, pick the tracks you want, and sync them in one tap.
-        </p>
-        {profileState.data ? (
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-semibold text-foreground">Minkyu Spotify</h1>
           <p className="text-sm text-muted-foreground">
-            Logged in as <span className="font-medium text-foreground">{profileState.data.display_name ?? profileState.data.id}</span>
+            Compare playlists side by side, pick the tracks you want, and sync them in one tap.
           </p>
-        ) : null}
-        <Button asChild variant="outline" className="mt-2 w-full sm:w-auto">
-          <Link href="/remove">Manage Playlists</Link>
+          {profileState.data ? (
+            <p className="text-sm text-muted-foreground">
+              Logged in as <span className="font-medium text-foreground">{profileState.data.display_name ?? profileState.data.id}</span>
+            </p>
+          ) : null}
+        </div>
+        <Button asChild variant="secondary" className="w-full shrink-0 sm:w-auto">
+          <Link href="/remove" aria-label="Go to remove tracks page">
+            Remove tracks
+          </Link>
         </Button>
       </header>
 
