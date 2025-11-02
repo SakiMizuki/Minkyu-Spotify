@@ -109,6 +109,7 @@ export async function GET(
     let total = typeof tracksPage.total === "number" ? tracksPage.total : 0;
 
     if (offset === 0) {
+      const currentUser = await fetcher<{ id: string }>("/me");
       const playlistMetadata = await fetcher<{
         id: string;
         name: string;
@@ -122,7 +123,7 @@ export async function GET(
         `/playlists/${playlistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total),external_urls`,
       );
 
-      summary = toPlaylistSummary(playlistMetadata);
+      summary = toPlaylistSummary(playlistMetadata, currentUser.id);
       total = playlistMetadata.tracks?.total ?? total;
     }
 
