@@ -334,6 +334,12 @@ function PlaylistColumn({
   selectablePresence,
   selectedTrackIds,
   onToggle,
+  searchValue,
+  onSearchChange,
+  onSearchClear,
+  sortOption,
+  onSortChange,
+  isSearchActive,
 }: PlaylistColumnProps) {
   return (
     <Card className="flex h-full flex-col">
