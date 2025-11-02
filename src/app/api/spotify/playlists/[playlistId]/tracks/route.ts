@@ -89,7 +89,7 @@ export async function GET(
     const limit = parseLimit(searchParams.get("limit"));
 
     const { context: authContext, fetcher } = await getSpotifyClient(request);
-    ensureSpotifyScopes(authContext, ["playlist-read-private", "playlist-read-collaborative"]);
+    ensureSpotifyScopes(authContext, ["playlist-read-private", "playlist-read-collaborative", "user-read-private"]);
 
     const tracksPage = await fetcher<SpotifyPlaylistTracksPage>(
       `/playlists/${playlistId}/tracks?offset=${offset}&limit=${limit}&fields=items(track(id,uri,name,duration_ms,is_local,album(id,name,images),artists(id,name))),next,total`,
@@ -109,20 +109,25 @@ export async function GET(
     let total = typeof tracksPage.total === "number" ? tracksPage.total : 0;
 
     if (offset === 0) {
-      const playlistMetadata = await fetcher<{
-        id: string;
-        name: string;
-        description?: string | null;
-        images: { url: string; height: number | null; width: number | null }[];
-        owner: { id?: string | null; display_name?: string | null };
-        collaborative?: boolean;
-        tracks: { total: number };
-        external_urls?: { spotify?: string };
-      }>(
-        `/playlists/${playlistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total),external_urls`,
-      );
+      const [playlistMetadata, currentUser] = await Promise.all([
+        fetcher<{
+          id: string;
+          name: string;
+          description?: string | null;
+          images: { url: string; height: number | null; width: number | null }[];
+          owner: { id?: string | null; display_name?: string | null };
+          collaborative?: boolean;
+          tracks: { total: number };
+          external_urls?: { spotify?: string };
+        }>(
+          `/playlists/${playlistId}?fields=id,name,description,images,collaborative,owner(id,display_name),tracks(total),external_urls`,
+        ),
+        fetcher<{ id?: string | null }>(`/me`),
+      ]);
 
-      summary = toPlaylistSummary(playlistMetadata);
+      const currentUserId = typeof currentUser?.id === "string" && currentUser.id.length > 0 ? currentUser.id : undefined;
+
+      summary = toPlaylistSummary(playlistMetadata, currentUserId);
       total = playlistMetadata.tracks?.total ?? total;
     }
 
