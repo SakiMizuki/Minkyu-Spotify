@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import Link from "next/link";
+
+import { Search, X } from "lucide-react";
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -140,6 +144,104 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+type PlaylistSortOption =
+  | "original"
+  | "name-asc"
+  | "name-desc"
+  | "duration-asc"
+  | "duration-desc"
+  | "artist-asc"
+  | "artist-desc";
+
+const PLAYLIST_SORT_OPTIONS: { value: PlaylistSortOption; label: string }[] = [
+  { value: "original", label: "Original order" },
+  { value: "name-asc", label: "Track (A-Z)" },
+  { value: "name-desc", label: "Track (Z-A)" },
+  { value: "duration-asc", label: "Duration (short -> long)" },
+  { value: "duration-desc", label: "Duration (long -> short)" },
+  { value: "artist-asc", label: "Artist (A-Z)" },
+  { value: "artist-desc", label: "Artist (Z-A)" },
+];
+
+function compareStrings(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+function getPrimaryArtist(track: PlaylistTrackWithPresence): string {
+  return track.artists[0] ?? "";
+}
+
+function compareTracksBySortOption(a: PlaylistTrackWithPresence, b: PlaylistTrackWithPresence, sortOption: PlaylistSortOption): number {
+  switch (sortOption) {
+    case "name-asc":
+      return (
+        compareStrings(a.name, b.name) ||
+        compareStrings(getPrimaryArtist(a), getPrimaryArtist(b)) ||
+        compareStrings(a.instanceId, b.instanceId)
+      );
+    case "name-desc":
+      return (
+        compareStrings(b.name, a.name) ||
+        compareStrings(getPrimaryArtist(b), getPrimaryArtist(a)) ||
+        compareStrings(b.instanceId, a.instanceId)
+      );
+    case "duration-asc":
+      return (
+        a.durationMs - b.durationMs ||
+        compareStrings(a.name, b.name) ||
+        compareStrings(a.instanceId, b.instanceId)
+      );
+    case "duration-desc":
+      return (
+        b.durationMs - a.durationMs ||
+        compareStrings(a.name, b.name) ||
+        compareStrings(a.instanceId, b.instanceId)
+      );
+    case "artist-asc":
+      return (
+        compareStrings(getPrimaryArtist(a), getPrimaryArtist(b)) ||
+        compareStrings(a.name, b.name) ||
+        compareStrings(a.instanceId, b.instanceId)
+      );
+    case "artist-desc":
+      return (
+        compareStrings(getPrimaryArtist(b), getPrimaryArtist(a)) ||
+        compareStrings(b.name, a.name) ||
+        compareStrings(b.instanceId, a.instanceId)
+      );
+    case "original":
+    default:
+      return 0;
+  }
+}
+
+function applySearchAndSort(
+  tracks: PlaylistTrackWithPresence[] | undefined,
+  searchQuery: string,
+  sortOption: PlaylistSortOption,
+): PlaylistTrackWithPresence[] {
+  if (!tracks) {
+    return [];
+  }
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? tracks.filter((track) => {
+        if (track.name.toLowerCase().includes(normalizedQuery)) {
+          return true;
+        }
+
+        return track.artists.some((artist) => artist.toLowerCase().includes(normalizedQuery));
+      })
+    : [...tracks];
+
+  if (sortOption === "original") {
+    return filtered;
+  }
+
+  return [...filtered].sort((a, b) => compareTracksBySortOption(a, b, sortOption));
+}
+
 interface PlaylistTrackRowProps {
   track: PlaylistTrackWithPresence;
   highlightPresence?: TrackPresence | null;
@@ -213,6 +315,12 @@ interface PlaylistColumnProps {
   selectablePresence: TrackPresence | null;
   selectedTrackIds: Set<string>;
   onToggle: (instanceId: string) => void;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  onSearchClear: () => void;
+  sortOption: PlaylistSortOption;
+  onSortChange: (value: PlaylistSortOption) => void;
+  isSearchActive: boolean;
 }
 
 function PlaylistColumn({
@@ -247,6 +355,43 @@ function PlaylistColumn({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search tracks"
+              className="h-11 w-full rounded-xl pl-10 pr-10 text-sm"
+              aria-label={`Search ${label}`}
+            />
+            {searchValue ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={onSearchClear}
+                aria-label={`Clear search for ${label}`}
+              >
+                <X className="size-4" />
+              </Button>
+            ) : null}
+          </div>
+          <Select value={sortOption} onValueChange={(value) => onSortChange(value as PlaylistSortOption)}>
+            <SelectTrigger className="h-11 rounded-xl sm:w-56">
+              <SelectValue placeholder="Sort tracks" />
+            </SelectTrigger>
+            <SelectContent>
+              {PLAYLIST_SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <ScrollArea className="h-[420px] rounded-xl border bg-muted/20 p-3">
           <div className="flex flex-col gap-3">
             {loading && (!tracks || tracks.length === 0) ? (
@@ -263,7 +408,9 @@ function PlaylistColumn({
                 />
               ))
             ) : (
-              <p className="text-center text-xs text-muted-foreground">No tracks to display.</p>
+              <p className="text-center text-xs text-muted-foreground">
+                {isSearchActive ? "No tracks match your search." : "No tracks to display."}
+              </p>
             )}
           </div>
         </ScrollArea>
@@ -340,6 +487,11 @@ export function PlaylistSync() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isSwapActive, setIsSwapActive] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
+  const [searchQueries, setSearchQueries] = useState<{ A: string; B: string }>({ A: "", B: "" });
+  const [sortSelections, setSortSelections] = useState<{ A: PlaylistSortOption; B: PlaylistSortOption }>({
+    A: "original",
+    B: "original",
+  });
   const [lastPair, setLastPair] = useState<{ playlistAId: string; playlistBId: string } | null>(null);
   const [lastUndo, setLastUndo] = useState<{ targetPlaylistId: string; undoToken: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -662,6 +814,16 @@ export function PlaylistSync() {
     [comparison],
   );
 
+  const displayTracksA = useMemo(
+    () => applySearchAndSort(comparison?.playlistA.tracks, searchQueries.A, sortSelections.A),
+    [comparison?.playlistA.tracks, searchQueries.A, sortSelections.A],
+  );
+
+  const displayTracksB = useMemo(
+    () => applySearchAndSort(comparison?.playlistB.tracks, searchQueries.B, sortSelections.B),
+    [comparison?.playlistB.tracks, searchQueries.B, sortSelections.B],
+  );
+
   const playlistALoadState = playlistLoads.A;
   const playlistBLoadState = playlistLoads.B;
   const playlistALoadingMessage = formatPlaylistProgress(playlistALoadState);
@@ -728,6 +890,18 @@ export function PlaylistSync() {
       setSelectedTrackIds(new Set(missingTracks.map((track) => track.instanceId)));
     }
   }, [allSelected, comparison, missingTracks]);
+
+  const handleSearchChange = useCallback((slot: PlaylistSlotKey, value: string) => {
+    setSearchQueries((prev) => ({ ...prev, [slot]: value }));
+  }, []);
+
+  const handleSearchClear = useCallback((slot: PlaylistSlotKey) => {
+    setSearchQueries((prev) => ({ ...prev, [slot]: "" }));
+  }, []);
+
+  const handleSortChange = useCallback((slot: PlaylistSlotKey, value: PlaylistSortOption) => {
+    setSortSelections((prev) => ({ ...prev, [slot]: value }));
+  }, []);
 
   const handleOpenPreview = useCallback(() => {
     if (!isTargetPlaylistReady) {
@@ -897,6 +1071,9 @@ export function PlaylistSync() {
             Logged in as <span className="font-medium text-foreground">{profileState.data.display_name ?? profileState.data.id}</span>
           </p>
         ) : null}
+        <Button asChild variant="outline" className="mt-2 w-full sm:w-auto">
+          <Link href="/remove">Manage Playlists</Link>
+        </Button>
       </header>
 
       {loadError ? (
@@ -1024,7 +1201,7 @@ export function PlaylistSync() {
         <PlaylistColumn
           label="Playlist A"
           summary={comparison?.playlistA.summary ?? playlistALoadState.summary ?? undefined}
-          tracks={comparison?.playlistA.tracks}
+          tracks={displayTracksA}
           loading={isComparing || playlistState.loading || playlistALoadState.isLoading}
           progressText={playlistALoadingMessage}
           error={playlistALoadState.error}
@@ -1032,11 +1209,17 @@ export function PlaylistSync() {
           selectablePresence="uniqueToA"
           selectedTrackIds={selectedTrackIds}
           onToggle={handleToggleSelection}
+          searchValue={searchQueries.A}
+          onSearchChange={(value) => handleSearchChange("A", value)}
+          onSearchClear={() => handleSearchClear("A")}
+          sortOption={sortSelections.A}
+          onSortChange={(value) => handleSortChange("A", value)}
+          isSearchActive={searchQueries.A.trim().length > 0}
         />
         <PlaylistColumn
           label="Playlist B"
           summary={comparison?.playlistB.summary ?? playlistBLoadState.summary ?? undefined}
-          tracks={comparison?.playlistB.tracks}
+          tracks={displayTracksB}
           loading={isComparing || playlistState.loading || playlistBLoadState.isLoading}
           progressText={playlistBLoadingMessage}
           error={playlistBLoadState.error}
@@ -1044,6 +1227,12 @@ export function PlaylistSync() {
           selectablePresence={null}
           selectedTrackIds={selectedTrackIds}
           onToggle={handleToggleSelection}
+          searchValue={searchQueries.B}
+          onSearchChange={(value) => handleSearchChange("B", value)}
+          onSearchClear={() => handleSearchClear("B")}
+          sortOption={sortSelections.B}
+          onSortChange={(value) => handleSortChange("B", value)}
+          isSearchActive={searchQueries.B.trim().length > 0}
         />
       </div>
 
