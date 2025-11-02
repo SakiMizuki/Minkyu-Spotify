@@ -1066,11 +1066,11 @@ export function PlaylistSync() {
   const loadError = profileState.error ?? playlistState.error;
 
   return (
-    <section className="relative flex flex-col gap-6 pb-32">
+    <section className="relative flex flex-col gap-6 pb-32 fade-in">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold text-foreground">Minkyu Spotify</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-4xl font-serif font-semibold text-foreground">Minkyu Spotify</h1>
+          <p className="text-sm text-muted-foreground leading-relaxed">
             Compare playlists side by side, pick the tracks you want, and sync them in one tap.
           </p>
           {profileState.data ? (
@@ -1079,7 +1079,11 @@ export function PlaylistSync() {
             </p>
           ) : null}
         </div>
-        <Button asChild variant="secondary" className="w-full shrink-0 sm:w-auto">
+        <Button
+          asChild
+          variant="secondary"
+          className="w-full h-12 shrink-0 rounded-2xl shadow-md transition-all hover:shadow-lg sm:w-auto"
+        >
           <Link href="/remove" aria-label="Go to remove tracks page">
             Remove tracks
           </Link>
@@ -1087,28 +1091,31 @@ export function PlaylistSync() {
       </header>
 
       {loadError ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="rounded-2xl border-0 shadow-md">
           <AlertTitle>We hit a snag</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
         </Alert>
       ) : null}
 
       {actionMessage ? (
-        <Alert variant={actionMessage.type === "error" ? "destructive" : "default"}>
+        <Alert
+          variant={actionMessage.type === "error" ? "destructive" : "default"}
+          className="rounded-2xl border-0 shadow-md slide-in-up"
+        >
           <AlertTitle>{actionMessage.type === "error" ? "Something went wrong" : "All set"}</AlertTitle>
           <AlertDescription>{actionMessage.message}</AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="grid gap-4 rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+      <div className="grid gap-4 rounded-3xl border border-border/40 bg-card p-4 shadow-md transition-all hover:shadow-lg sm:p-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium text-foreground">Playlist A (source)</label>
             <Select value={playlistASelection} onValueChange={setPlaylistASelection}>
-              <SelectTrigger>
+              <SelectTrigger className="h-11 rounded-2xl border-border/40">
                 <SelectValue placeholder={playlistState.loading ? "Loading playlists..." : "Choose playlist A"} />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-2xl">
                 {playlistState.data?.map((playlist) => (
                   <SelectItem key={playlist.id} value={playlist.id}>
                     {playlist.name} ({playlist.trackCount})
@@ -1121,13 +1128,13 @@ export function PlaylistSync() {
               value={playlistAInput}
               onChange={(event) => setPlaylistAInput(event.target.value)}
               inputMode="url"
-              className="h-12 text-base"
+              className="h-11 rounded-2xl border-border/40 text-base focus:border-primary/50"
             />
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium text-foreground">Playlist B (target)</label>
             <Select value={playlistBSelection} onValueChange={setPlaylistBSelection}>
-              <SelectTrigger>
+              <SelectTrigger className="h-11 rounded-2xl border-border/40">
                 <SelectValue
                   placeholder={
                     playlistState.loading
@@ -1138,7 +1145,7 @@ export function PlaylistSync() {
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-2xl">
                 {editablePlaylists.map((playlist) => (
                   <SelectItem key={playlist.id} value={playlist.id}>
                     {playlist.name} ({playlist.trackCount})
@@ -1151,7 +1158,7 @@ export function PlaylistSync() {
               value={playlistBInput}
               onChange={(event) => setPlaylistBInput(event.target.value)}
               inputMode="url"
-              className="h-12 text-base"
+              className="h-11 rounded-2xl border-border/40 text-base focus:border-primary/50"
             />
             {playlistState.loading ? null : editablePlaylists.length === 0 ? (
               <p className="text-xs text-muted-foreground">
@@ -1163,7 +1170,7 @@ export function PlaylistSync() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-2xl bg-muted/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-2xl border border-border/20 bg-secondary/40 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <Switch id="swap-toggle" checked={isSwapActive} onCheckedChange={handleSwap} />
             <label htmlFor="swap-toggle" className="text-sm text-foreground">
@@ -1171,7 +1178,11 @@ export function PlaylistSync() {
             </label>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button onClick={handleCompare} disabled={isComparing || playlistState.loading} className="h-12 text-base">
+            <Button
+              onClick={handleCompare}
+              disabled={isComparing || playlistState.loading}
+              className="h-11 rounded-2xl bg-primary text-base shadow-md transition-all hover:bg-accent hover:shadow-lg"
+            >
               {isComparing ? "Comparing..." : "Compare playlists"}
             </Button>
             <Button
@@ -1186,7 +1197,7 @@ export function PlaylistSync() {
                 !isTargetPlaylistReady ||
                 !isTargetPlaylistWritable
               }
-              className="h-12 text-base"
+              className="h-11 rounded-2xl text-base shadow-md transition-all hover:shadow-lg"
             >
               Preview sync
             </Button>
@@ -1195,9 +1206,9 @@ export function PlaylistSync() {
       </div>
 
       {comparison ? (
-        <Card className="border-dashed">
+        <Card className="rounded-2xl border border-border/40 bg-card shadow-md border-dashed">
           <CardHeader>
-            <CardTitle className="text-lg">Comparison results</CardTitle>
+            <CardTitle className="text-lg font-serif">Comparison results</CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
               {comparison.inAOnly.length === 0 && comparison.inBOnly.length === 0
                 ? "Playlists are already in sync."
@@ -1207,7 +1218,7 @@ export function PlaylistSync() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 slide-in-up">
         <PlaylistColumn
           label="Playlist A"
           summary={comparison?.playlistA.summary ?? playlistALoadState.summary ?? undefined}
@@ -1255,9 +1266,13 @@ export function PlaylistSync() {
       />
 
       {comparison ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-lg backdrop-blur">
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border/40 bg-background/95 px-4 py-3 shadow-lg backdrop-blur rounded-t-3xl">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <Button onClick={handleToggleSelectAll} variant="outline" className="h-14 flex-1 text-base">
+            <Button
+              onClick={handleToggleSelectAll}
+              variant="outline"
+              className="h-11 flex-1 rounded-2xl border-border/40 bg-transparent text-base shadow-sm transition-all hover:shadow-md"
+            >
               {allSelected ? "Deselect All" : "Select All"}
             </Button>
             <Button
@@ -1271,7 +1286,7 @@ export function PlaylistSync() {
                 !isTargetPlaylistReady ||
                 !isTargetPlaylistWritable
               }
-              className="h-14 flex-1 text-base"
+              className="h-11 flex-1 rounded-2xl bg-primary text-base shadow-md transition-all hover:bg-accent hover:shadow-lg"
             >
               {isSyncing ? "Syncing..." : `Sync Selected (${selectedTrackDetails.length})`}
             </Button>
@@ -1279,7 +1294,7 @@ export function PlaylistSync() {
               variant="secondary"
               onClick={handleUndo}
               disabled={!lastUndo || isUndoing}
-              className="h-14 flex-1 text-base"
+              className="h-11 flex-1 rounded-2xl text-base shadow-md transition-all hover:shadow-lg"
             >
               {isUndoing ? "Undoing..." : "Undo"}
             </Button>

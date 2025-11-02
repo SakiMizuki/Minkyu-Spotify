@@ -27,22 +27,25 @@ export default async function Home({ searchParams }: HomeProps) {
 
   if (!isAuthenticated) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background to-muted px-4 py-16">
-        <Card className="max-w-xl shadow-xl">
-          <CardHeader className="space-y-3">
-            <CardTitle className="text-3xl font-semibold text-foreground">Minkyu Spotify</CardTitle>
-            <p className="text-sm text-muted-foreground">
+      <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-background via-background to-background px-4 py-16">
+        <Card className="w-full max-w-xl rounded-3xl border-0 bg-card shadow-xl fade-in">
+          <CardHeader className="space-y-4 pb-6">
+            <CardTitle className="text-4xl font-serif font-semibold text-foreground">Minkyu Spotify</CardTitle>
+            <p className="text-sm text-muted-foreground leading-relaxed">
               Connect your Spotify account to browse playlists, compare track lists, and sync missing songs in a single click.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
             {errorMessage ? (
-              <Alert variant="destructive">
+              <Alert variant="destructive" className="rounded-2xl">
                 <AlertTitle>Authentication error</AlertTitle>
                 <AlertDescription>{errorMessage}</AlertDescription>
               </Alert>
             ) : null}
-            <Button asChild className="w-full">
+            <Button
+              asChild
+              className="w-full h-12 rounded-2xl bg-primary text-primary-foreground shadow-md transition-all hover:bg-accent hover:shadow-lg"
+            >
               <Link href="/api/auth/login">Log in with Spotify</Link>
             </Button>
             <p className="text-center text-xs text-muted-foreground">
@@ -56,7 +59,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <main className="min-h-screen bg-background px-4 py-10">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 fade-in">
         <PlaylistSync />
       </div>
     </main>
