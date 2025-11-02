@@ -666,15 +666,26 @@ export function PlaylistSync() {
   const playlistBLoadState = playlistLoads.B;
   const playlistALoadingMessage = formatPlaylistProgress(playlistALoadState);
   const playlistBLoadingMessage = formatPlaylistProgress(playlistBLoadState);
-  const isPlaylistAReady =
-    Boolean(playlistALoadState.summary) &&
-    !playlistALoadState.isLoading &&
-    (playlistALoadState.totalCount === 0 || playlistALoadState.loadedCount >= playlistALoadState.totalCount);
-  const isPlaylistBReady =
-    Boolean(playlistBLoadState.summary) &&
+  const targetPlaylistSummary =
+    comparison?.playlistB.summary ??
+    (lastPair ? playlistState.data?.find((playlist) => playlist.id === lastPair.playlistBId) ?? null : null) ??
+    playlistBLoadState.summary ??
+    null;
+
+  const targetPlaylistId = targetPlaylistSummary?.id ?? null;
+
+  const isTargetPlaylistLoading = playlistBLoadState.isLoading;
+
+  const isTargetPlaylistReady =
+    Boolean(targetPlaylistId) &&
+    playlistBLoadState.playlistId === targetPlaylistId &&
     !playlistBLoadState.isLoading &&
     (playlistBLoadState.totalCount === 0 || playlistBLoadState.loadedCount >= playlistBLoadState.totalCount);
-  const playlistsFullyLoaded = isPlaylistAReady && isPlaylistBReady;
+
+  const isTargetPlaylistWritable =
+    targetPlaylistSummary !== null
+      ? targetPlaylistSummary.isEditable ?? Boolean(targetPlaylistSummary.isOwned || targetPlaylistSummary.isCollaborative)
+      : false;
 
   useEffect(() => {
     if (!comparison) {
@@ -719,8 +730,13 @@ export function PlaylistSync() {
   }, [allSelected, comparison, missingTracks]);
 
   const handleOpenPreview = useCallback(() => {
-    if (!playlistsFullyLoaded) {
-      setActionMessage({ type: "error", message: "Still loading tracks - please wait." });
+    if (!isTargetPlaylistReady) {
+      setActionMessage({ type: "error", message: "Still loading the target playlist - please wait." });
+      return;
+    }
+
+    if (!isTargetPlaylistWritable) {
+      setActionMessage({ type: "error", message: "You can only sync into playlists you own or that are collaborative." });
       return;
     }
 
@@ -730,7 +746,7 @@ export function PlaylistSync() {
     }
 
     setIsPreviewOpen(true);
-  }, [playlistsFullyLoaded, selectedTrackDetails.length]);
+  }, [isTargetPlaylistReady, isTargetPlaylistWritable, selectedTrackDetails.length]);
 
   const refreshComparison = useCallback(async () => {
     if (!lastPair) {
@@ -760,18 +776,17 @@ export function PlaylistSync() {
       return;
     }
 
-    if (!playlistsFullyLoaded) {
-      setActionMessage({ type: "error", message: "Still loading tracks - please wait." });
+    if (!isTargetPlaylistReady) {
+      setActionMessage({ type: "error", message: "Still loading the target playlist - please wait." });
+      return;
+    }
+
+    if (!isTargetPlaylistWritable) {
+      setActionMessage({ type: "error", message: "You can only sync into playlists you own or that are collaborative." });
       return;
     }
 
     const targetPlaylistId = lastPair.playlistBId;
-    const targetSummary = playlistState.data?.find((playlist) => playlist.id === targetPlaylistId);
-
-    if (targetSummary && targetSummary.isEditable === false) {
-      setActionMessage({ type: "error", message: "You can only sync into playlists you own or that are collaborative." });
-      return;
-    }
 
     setIsSyncing(true);
     setActionMessage(null);
@@ -825,7 +840,7 @@ export function PlaylistSync() {
       setIsSyncing(false);
       setIsPreviewOpen(false);
     }
-  }, [lastPair, playlistState.data, playlistsFullyLoaded, refreshComparison, selectedTrackDetails]);
+  }, [isTargetPlaylistReady, isTargetPlaylistWritable, lastPair, refreshComparison, selectedTrackDetails]);
 
   const handleUndo = useCallback(async () => {
     if (!lastUndo) {
@@ -975,7 +990,15 @@ export function PlaylistSync() {
             <Button
               variant="secondary"
               onClick={handleOpenPreview}
-              disabled={selectedTrackDetails.length === 0 || isSyncing || !comparison || !playlistsFullyLoaded}
+              disabled={
+                selectedTrackDetails.length === 0 ||
+                isSyncing ||
+                isUndoing ||
+                isComparing ||
+                !comparison ||
+                !isTargetPlaylistReady ||
+                !isTargetPlaylistWritable
+              }
               className="h-12 text-base"
             >
               Preview sync
@@ -1040,7 +1063,15 @@ export function PlaylistSync() {
             </Button>
             <Button
               onClick={handleOpenPreview}
-              disabled={selectedTrackDetails.length === 0 || isSyncing || !playlistsFullyLoaded}
+              disabled={
+                selectedTrackDetails.length === 0 ||
+                isSyncing ||
+                isUndoing ||
+                isComparing ||
+                isTargetPlaylistLoading ||
+                !isTargetPlaylistReady ||
+                !isTargetPlaylistWritable
+              }
               className="h-14 flex-1 text-base"
             >
               {isSyncing ? "Syncing..." : `Sync Selected (${selectedTrackDetails.length})`}
